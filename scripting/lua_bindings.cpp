@@ -443,6 +443,201 @@ static int l_addressList_getCount(lua_State* L) {
     return 1;
 }
 
+// ── Additional CE-compatible functions ──
+
+static int l_openProcess(lua_State* L) {
+    const char* nameOrPid = luaL_checkstring(L, 1);
+    // Try as PID first
+    int pid = atoi(nameOrPid);
+    if (pid > 0) {
+        lua_pushinteger(L, pid);
+        return 1;
+    }
+    // Search by name
+    for (auto& entry : std::filesystem::directory_iterator("/proc")) {
+        auto name = entry.path().filename().string();
+        try {
+            int p = std::stoi(name);
+            std::ifstream comm("/proc/" + name + "/comm");
+            std::string pname;
+            if (comm) std::getline(comm, pname);
+            if (pname == nameOrPid) { lua_pushinteger(L, p); return 1; }
+        } catch (...) {}
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int l_getOpenedProcessID(lua_State* L) {
+    auto* p = getProc(L);
+    lua_pushinteger(L, p ? p->pid() : 0);
+    return 1;
+}
+
+static int l_writePointer(lua_State* L) {
+    auto* p = getProc(L);
+    if (!p) return 0;
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    uintptr_t val = (uintptr_t)luaL_checkinteger(L, 2);
+    p->write(addr, &val, sizeof(val));
+    return 0;
+}
+
+static int l_registerSymbol(lua_State* L) {
+    auto* r = getResolver(L);
+    // For now, store in a global table in Lua registry
+    const char* name = luaL_checkstring(L, 1);
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 2);
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_user_symbols");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, "ce_user_symbols");
+    }
+    lua_pushinteger(L, (lua_Integer)addr);
+    lua_setfield(L, -2, name);
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int l_unregisterSymbol(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_user_symbols");
+    if (!lua_isnil(L, -1)) {
+        lua_pushnil(L);
+        lua_setfield(L, -2, name);
+    }
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int l_inputQuery(lua_State* L) {
+    const char* title = luaL_checkstring(L, 1);
+    const char* prompt = luaL_checkstring(L, 2);
+    const char* defval = luaL_optstring(L, 3, "");
+    // In GUI mode, would use QInputDialog; for now, stderr prompt
+    fprintf(stderr, "[CE Lua] %s: %s [%s]: ", title, prompt, defval);
+    char buf[256];
+    if (fgets(buf, sizeof(buf), stdin)) {
+        buf[strcspn(buf, "\n")] = 0;
+        if (buf[0] == 0) lua_pushstring(L, defval);
+        else lua_pushstring(L, buf);
+    } else {
+        lua_pushstring(L, defval);
+    }
+    return 1;
+}
+
+static int l_shellExecute(lua_State* L) {
+    const char* cmd = luaL_checkstring(L, 1);
+    int ret = system(cmd);
+    lua_pushinteger(L, ret);
+    return 1;
+}
+
+static int l_getScreenWidth(lua_State* L) {
+    // Basic X11 screen size
+    lua_pushinteger(L, 1920); // Default; would query X11
+    return 1;
+}
+
+static int l_getScreenHeight(lua_State* L) {
+    lua_pushinteger(L, 1080);
+    return 1;
+}
+
+static int l_inMainThread(lua_State* L) {
+    lua_pushboolean(L, 1); // Simplified
+    return 1;
+}
+
+static int l_getThreadList(lua_State* L) {
+    auto* p = getProc(L);
+    if (!p) { lua_newtable(L); return 1; }
+    auto threads = p->threads();
+    lua_newtable(L);
+    for (size_t i = 0; i < threads.size(); ++i) {
+        lua_pushinteger(L, threads[i].tid);
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
+static int l_readRegionFromFile(lua_State* L) {
+    auto* p = getProc(L);
+    if (!p) return 0;
+    const char* filename = luaL_checkstring(L, 1);
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 2);
+    std::ifstream f(filename, std::ios::binary);
+    if (!f) { lua_pushboolean(L, 0); return 1; }
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), {});
+    auto r = p->write(addr, data.data(), data.size());
+    lua_pushboolean(L, r.has_value());
+    return 1;
+}
+
+static int l_writeRegionToFile(lua_State* L) {
+    auto* p = getProc(L);
+    if (!p) return 0;
+    const char* filename = luaL_checkstring(L, 1);
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 2);
+    size_t size = (size_t)luaL_checkinteger(L, 3);
+    std::vector<uint8_t> buf(size);
+    auto r = p->read(addr, buf.data(), size);
+    if (!r) { lua_pushboolean(L, 0); return 1; }
+    std::ofstream f(filename, std::ios::binary);
+    if (f) { f.write((char*)buf.data(), *r); lua_pushboolean(L, 1); }
+    else lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int l_AOBScan(lua_State* L) {
+    auto* p = getProc(L);
+    if (!p) { lua_pushnil(L); return 1; }
+    const char* pattern = luaL_checkstring(L, 1);
+    ScanConfig cfg;
+    cfg.valueType = ValueType::ByteArray;
+    cfg.parseAOB(pattern);
+    cfg.alignment = 1;
+    MemoryScanner scanner;
+    auto result = scanner.firstScan(*p, cfg);
+    if (result.count() > 0)
+        lua_pushinteger(L, (lua_Integer)result.address(0));
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
+static int l_AOBScanEx(lua_State* L) {
+    // Returns all results as a table
+    auto* p = getProc(L);
+    if (!p) { lua_newtable(L); return 1; }
+    const char* pattern = luaL_checkstring(L, 1);
+    ScanConfig cfg;
+    cfg.valueType = ValueType::ByteArray;
+    cfg.parseAOB(pattern);
+    cfg.alignment = 1;
+    MemoryScanner scanner;
+    auto result = scanner.firstScan(*p, cfg);
+    lua_newtable(L);
+    size_t count = std::min(result.count(), size_t(1000));
+    for (size_t i = 0; i < count; ++i) {
+        lua_pushinteger(L, (lua_Integer)result.address(i));
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
+static int l_fullAccess(lua_State* L) {
+    auto* p = getProc(L);
+    if (!p) return 0;
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    size_t size = (size_t)luaL_checkinteger(L, 2);
+    p->protect(addr, size, MemProt::All);
+    return 0;
+}
+
 // ── Constants registration ──
 
 static void registerConstants(lua_State* L) {
@@ -545,6 +740,38 @@ void registerExtendedBindings(lua_State* L) {
 
     // Address list
     lua_register(L, "addressList_getCount", l_addressList_getCount);
+
+    // Process
+    lua_register(L, "openProcess", l_openProcess);
+    lua_register(L, "getOpenedProcessID", l_getOpenedProcessID);
+    lua_register(L, "getThreadList", l_getThreadList);
+
+    // Extended memory
+    lua_register(L, "writePointer", l_writePointer);
+
+    // Symbols
+    lua_register(L, "registerSymbol", l_registerSymbol);
+    lua_register(L, "unregisterSymbol", l_unregisterSymbol);
+
+    // AOB
+    lua_register(L, "AOBScan", l_AOBScan);
+    lua_register(L, "AOBScanEx", l_AOBScanEx);
+
+    // Memory protection
+    lua_register(L, "fullAccess", l_fullAccess);
+
+    // File regions
+    lua_register(L, "readRegionFromFile", l_readRegionFromFile);
+    lua_register(L, "writeRegionToFile", l_writeRegionToFile);
+
+    // UI
+    lua_register(L, "inputQuery", l_inputQuery);
+    lua_register(L, "shellExecute", l_shellExecute);
+    lua_register(L, "getScreenWidth", l_getScreenWidth);
+    lua_register(L, "getScreenHeight", l_getScreenHeight);
+
+    // Misc
+    lua_register(L, "inMainThread", l_inMainThread);
 
     // Constants
     registerConstants(L);

@@ -42,6 +42,14 @@ template<typename T> bool cmpIncreased(T c, T v, T)      { return c > v; }
 template<typename T> bool cmpDecreased(T c, T v, T)      { return c < v; }
 template<typename T> bool cmpUnknown(T, T, T)             { return true; }
 
+// Float-specific: rounded comparison (match within tolerance)
+inline bool cmpFloatRounded(float c, float v, float tol)  { return std::abs(c - v) <= tol; }
+inline bool cmpDoubleRounded(double c, double v, double tol) { return std::abs(c - v) <= tol; }
+
+// Float-specific: truncated comparison (integer part matches)
+inline bool cmpFloatTruncated(float c, float v, float)    { return (int)c == (int)v; }
+inline bool cmpDoubleTruncated(double c, double v, double) { return (int64_t)c == (int64_t)v; }
+
 template<typename T>
 CompareFn<T> getCompare(ScanCompare cmp) {
     switch (cmp) {
@@ -88,6 +96,27 @@ void scanBufferString(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
     for (size_t offset = 0; offset < limit; ++offset) {
         if (std::memcmp(buf + offset, n, nLen) == 0) {
             // Store 1 byte as placeholder value (address is what matters)
+            uint8_t dummy = 0;
+            result.addResult(baseAddr + offset, &dummy, 1);
+        }
+    }
+}
+
+/// Scan buffer for a UTF-16LE string.
+void scanBufferUnicode(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
+                       const std::string& needle, ScanResult& result)
+{
+    // Convert UTF-8 needle to UTF-16LE
+    std::vector<uint16_t> wide;
+    for (char c : needle) wide.push_back((uint16_t)(uint8_t)c); // Simple ASCII→UTF-16
+    size_t nBytes = wide.size() * 2;
+    if (nBytes == 0 || bufSize < nBytes) return;
+
+    const uint8_t* n = (const uint8_t*)wide.data();
+    size_t limit = bufSize - nBytes + 1;
+
+    for (size_t offset = 0; offset < limit; offset += 2) {
+        if (std::memcmp(buf + offset, n, nBytes) == 0) {
             uint8_t dummy = 0;
             result.addResult(baseAddr + offset, &dummy, 1);
         }
@@ -425,6 +454,8 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
                     config.floatValue, config.floatValue2, getCompare<double>(config.compareType), res); break;
             case ValueType::String:
                 scanBufferString(buf, bytesRead, base, config.stringValue, res); break;
+            case ValueType::UnicodeString:
+                scanBufferUnicode(buf, bytesRead, base, config.stringValue, res); break;
             case ValueType::ByteArray:
                 scanBufferAOB(buf, bytesRead, base, config.byteArray, config.byteArrayMask, res); break;
             case ValueType::Binary: {

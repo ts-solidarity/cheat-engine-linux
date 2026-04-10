@@ -876,10 +876,23 @@ bool AddressListModel::setData(const QModelIndex& index, const QVariant& value, 
         auto& e = entries_[index.row()];
         e.active = (value.toInt() == Qt::Checked);
         if (e.active)
-            e.frozenValue = e.currentValue; // Freeze current value
+            e.frozenValue = e.currentValue;
         else
             e.frozenValue.clear();
         emit dataChanged(index, index);
+
+        // Cascade to children if this is a group
+        if (e.isGroup) {
+            int parentIndent = e.indent;
+            for (int i = index.row() + 1; i < (int)entries_.size(); ++i) {
+                if (entries_[i].indent <= parentIndent) break;
+                entries_[i].active = e.active;
+                if (e.active) entries_[i].frozenValue = entries_[i].currentValue;
+                else entries_[i].frozenValue.clear();
+            }
+            emit dataChanged(this->index(index.row() + 1, 0),
+                this->index(std::min((int)entries_.size() - 1, index.row() + 50), columnCount() - 1));
+        }
         return true;
     }
     if (role == Qt::EditRole) {
