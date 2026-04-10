@@ -93,6 +93,7 @@ find_package(Qt6 COMPONENTS Widgets)
 if(Qt6_FOUND)
     set(CMAKE_AUTOMOC ON)
     qt_add_executable(cheatengine
+        gui/resources.qrc
         gui/main.cpp
         gui/mainwindow.cpp
         gui/processlistdialog.cpp

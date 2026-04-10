@@ -1,5 +1,8 @@
 #include "gui/mainwindow.hpp"
 #include <QApplication>
+#include <QIcon>
+#include <QDir>
+#include <QFileInfo>
 
 static const char* darkStyleSheet = R"(
     QWidget { background-color: #1e1e2e; color: #cdd6f4; }
@@ -45,6 +48,25 @@ int main(int argc, char* argv[]) {
     app.setApplicationName("Cheat Engine");
     app.setOrganizationName("cecore");
     app.setStyleSheet(darkStyleSheet);
+
+    // Set application icon — look relative to executable
+    auto exeDir = QFileInfo(argv[0]).absolutePath();
+    QStringList iconPaths = {
+        exeDir + "/../packaging/cheatengine.png",
+        exeDir + "/cheatengine.png",
+        "/usr/share/icons/hicolor/128x128/apps/cheatengine.png",
+        "packaging/cheatengine.png",
+    };
+    bool iconSet = false;
+    for (auto& p : iconPaths) {
+        if (QFileInfo::exists(p)) {
+            app.setWindowIcon(QIcon(p));
+            iconSet = true;
+            break;
+        }
+    }
+    if (!iconSet)
+        app.setWindowIcon(QIcon(":/icon.png"));
 
     ce::gui::MainWindow w;
     w.show();
