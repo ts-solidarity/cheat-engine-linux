@@ -1,8 +1,10 @@
 #include "gui/mainwindow.hpp"
 #include <QApplication>
 #include <QIcon>
+#include <QPixmap>
 #include <QDir>
 #include <QFileInfo>
+#include <unistd.h>
 
 static const char* darkStyleSheet = R"(
     QWidget { background-color: #1e1e2e; color: #cdd6f4; }
@@ -49,35 +51,36 @@ int main(int argc, char* argv[]) {
     app.setOrganizationName("cecore");
     app.setStyleSheet(darkStyleSheet);
 
-    // Set application icon
+    // Set application icon — resolve exe path via /proc/self/exe
     QIcon appIcon;
-
-    // Try file paths first
-    auto exeDir = QFileInfo(argv[0]).absolutePath();
-    QStringList iconPaths = {
-        exeDir + "/../packaging/cheatengine.png",
-        exeDir + "/cheatengine.png",
-        "/usr/share/icons/hicolor/128x128/apps/cheatengine.png",
-        "packaging/cheatengine.png",
-    };
-    for (auto& p : iconPaths) {
-        if (QFileInfo::exists(p)) {
-            appIcon = QIcon(p);
-            break;
+    char exeBuf[4096];
+    ssize_t exeLen = readlink("/proc/self/exe", exeBuf, sizeof(exeBuf) - 1);
+    if (exeLen > 0) {
+        exeBuf[exeLen] = 0;
+        auto exeDir = QFileInfo(exeBuf).absolutePath();
+        QStringList iconPaths = {
+            exeDir + "/cheatengine.png",
+            exeDir + "/../packaging/cheatengine.png",
+        };
+        for (auto& p : iconPaths) {
+            QPixmap pm(p);
+            if (!pm.isNull()) {
+                appIcon = QIcon(pm);
+                break;
+            }
         }
     }
 
     // Fallback to embedded resource
-    if (appIcon.isNull())
-        appIcon = QIcon(":/icon.png");
-
-    if (!appIcon.isNull()) {
-        app.setWindowIcon(appIcon);
+    if (appIcon.isNull()) {
+        QPixmap pm(":/icon.png");
+        if (!pm.isNull()) appIcon = QIcon(pm);
     }
 
+    app.setWindowIcon(appIcon);
+
     ce::gui::MainWindow w;
-    if (!appIcon.isNull())
-        w.setWindowIcon(appIcon);
+    w.setWindowIcon(appIcon);
     w.show();
 
     return app.exec();

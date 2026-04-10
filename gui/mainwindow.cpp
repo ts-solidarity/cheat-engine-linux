@@ -12,6 +12,7 @@
 #include "core/ct_file.hpp"
 
 #include <QMenuBar>
+#include <QPixmap>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -184,8 +185,15 @@ void MainWindow::setupUi() {
 
     // ── Process bar ──
     auto* processBar = new QHBoxLayout;
-    auto* openBtn = new QPushButton("📂");
+    auto* openBtn = new QPushButton;
     openBtn->setFixedSize(30, 30);
+    // Use CE icon for the process selector button
+    QPixmap btnIcon(":/icon.png");
+    if (!btnIcon.isNull())
+        openBtn->setIcon(QIcon(btnIcon.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+    else
+        openBtn->setText("CE");
+    openBtn->setIconSize(QSize(24, 24));
     connect(openBtn, &QPushButton::clicked, this, &MainWindow::onOpenProcess);
     processLabel_ = new QLabel("No process selected");
     processLabel_->setStyleSheet("font-weight: bold;");
