@@ -49,7 +49,10 @@ int main(int argc, char* argv[]) {
     app.setOrganizationName("cecore");
     app.setStyleSheet(darkStyleSheet);
 
-    // Set application icon — look relative to executable
+    // Set application icon
+    QIcon appIcon;
+
+    // Try file paths first
     auto exeDir = QFileInfo(argv[0]).absolutePath();
     QStringList iconPaths = {
         exeDir + "/../packaging/cheatengine.png",
@@ -57,18 +60,24 @@ int main(int argc, char* argv[]) {
         "/usr/share/icons/hicolor/128x128/apps/cheatengine.png",
         "packaging/cheatengine.png",
     };
-    bool iconSet = false;
     for (auto& p : iconPaths) {
         if (QFileInfo::exists(p)) {
-            app.setWindowIcon(QIcon(p));
-            iconSet = true;
+            appIcon = QIcon(p);
             break;
         }
     }
-    if (!iconSet)
-        app.setWindowIcon(QIcon(":/icon.png"));
+
+    // Fallback to embedded resource
+    if (appIcon.isNull())
+        appIcon = QIcon(":/icon.png");
+
+    if (!appIcon.isNull()) {
+        app.setWindowIcon(appIcon);
+    }
 
     ce::gui::MainWindow w;
+    if (!appIcon.isNull())
+        w.setWindowIcon(appIcon);
     w.show();
 
     return app.exec();
