@@ -21,6 +21,7 @@
 #include <QFont>
 #include <QMenu>
 #include <QShortcut>
+#include <QInputDialog>
 #include <QFileDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -28,6 +29,10 @@
 #include <cstring>
 
 namespace ce::gui {
+
+// Forward declarations of static helpers
+static ScanCompare mapScanType(int index);
+static ValueType mapValueType(int index);
 
 // ═══════════════════════════════════════════════════════════════
 // MainWindow
@@ -73,6 +78,12 @@ void MainWindow::setupMenus() {
         if (!process_) return;
         auto* w = new MemoryRegionsWindow(process_.get(), this);
         w->setAttribute(Qt::WA_DeleteOnClose);
+        connect(w, &MemoryRegionsWindow::navigateTo, this, [this](uintptr_t addr) {
+            auto* browser = new MemoryBrowser(process_.get(), this);
+            browser->setAttribute(Qt::WA_DeleteOnClose);
+            browser->gotoAddress(addr);
+            browser->show();
+        });
         w->show();
     });
     view->addAction("Thread List", this, [this]() {
@@ -104,7 +115,11 @@ void MainWindow::setupMenus() {
     }, QKeySequence("Ctrl+P"));
     tools->addAction("Structure Dissector...", this, [this]() {
         if (!process_) return;
-        auto* sd = new StructureDissector(process_.get(), 0, this);
+        bool ok;
+        auto text = QInputDialog::getText(this, "Structure Dissector", "Base address (hex):",
+            QLineEdit::Normal, "0", &ok);
+        uintptr_t addr = ok ? text.toULongLong(nullptr, 16) : 0;
+        auto* sd = new StructureDissector(process_.get(), addr, this);
         sd->setAttribute(Qt::WA_DeleteOnClose);
         sd->show();
     });
@@ -115,6 +130,16 @@ void MainWindow::setupMenus() {
         console->setAttribute(Qt::WA_DeleteOnClose);
         console->show();
     }, QKeySequence("Ctrl+Shift+L"));
+
+    auto* help = menuBar()->addMenu("&Help");
+    help->addAction("About", this, [this]() {
+        QMessageBox::about(this, "Cheat Engine for Linux",
+            "<h2>Cheat Engine for Linux</h2>"
+            "<p>Memory scanner, debugger, and code injection tool</p>"
+            "<p>C++23 / Qt6 / Capstone / Keystone / Lua 5.3</p>"
+            "<p>9,120 lines of code</p>"
+            "<p><a href='https://github.com/ts-solidarity/cheat-engine-linux'>GitHub</a></p>");
+    });
 }
 
 void MainWindow::setupUi() {
@@ -258,22 +283,50 @@ void MainWindow::setupUi() {
 
         if (!selected.isEmpty()) {
             menu.addAction("Delete", this, &MainWindow::onDeleteAddresses, QKeySequence::Delete);
-            menu.addSeparator();
 
-            auto* freezeMenu = menu.addMenu("Freeze");
+            menu.addSeparator();
+            auto* freezeMenu = menu.addMenu("Freeze Mode");
             freezeMenu->addAction("Normal", [this, selected]() {
-                for (auto& idx : selected)
-                    if (idx.row() < (int)addressListModel_->rowCount())
-                        ; // Would need access to entries_ — simplified
+                for (auto& idx : selected) addressListModel_->setFreezeMode(idx.row(), FreezeMode::Normal);
+            });
+            freezeMenu->addAction("Increase Only", [this, selected]() {
+                for (auto& idx : selected) addressListModel_->setFreezeMode(idx.row(), FreezeMode::IncreaseOnly);
+            });
+            freezeMenu->addAction("Decrease Only", [this, selected]() {
+                for (auto& idx : selected) addressListModel_->setFreezeMode(idx.row(), FreezeMode::DecreaseOnly);
+            });
+            freezeMenu->addAction("Never Increase", [this, selected]() {
+                for (auto& idx : selected) addressListModel_->setFreezeMode(idx.row(), FreezeMode::NeverIncrease);
+            });
+            freezeMenu->addAction("Never Decrease", [this, selected]() {
+                for (auto& idx : selected) addressListModel_->setFreezeMode(idx.row(), FreezeMode::NeverDecrease);
+            });
+
+            menu.addSeparator();
+            menu.addAction("Browse this address", [this, selected]() {
+                if (!process_ || selected.isEmpty()) return;
+                auto& entries = addressListModel_->entries();
+                int row = selected.first().row();
+                if (row < (int)entries.size()) {
+                    auto* browser = new MemoryBrowser(process_.get(), this);
+                    browser->setAttribute(Qt::WA_DeleteOnClose);
+                    browser->gotoAddress(entries[row].address);
+                    browser->show();
+                }
             });
         }
 
         menu.addSeparator();
+        menu.addAction("Add Address Manually...", [this]() {
+            bool ok;
+            auto text = QInputDialog::getText(this, "Add Address", "Address (hex):", QLineEdit::Normal, "", &ok);
+            if (ok && !text.isEmpty()) {
+                uintptr_t addr = text.toULongLong(&ok, 16);
+                if (ok) addressListModel_->addEntry(addr, mapValueType(valueTypeCombo_->currentIndex()), "Manual entry");
+            }
+        });
         menu.addAction("Add Group", [this]() {
-            AddressEntry e;
-            e.isGroup = true;
-            e.description = "New Group";
-            addressListModel_->addEntry(0, ValueType::Int32, "New Group");
+            addressListModel_->addEntry(0, ValueType::Int32, "-- Group --");
         });
 
         menu.exec(addressListView_->viewport()->mapToGlobal(pos));
@@ -720,6 +773,12 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
         entries_.push_back(e);
     }
     endResetModel();
+}
+
+void AddressListModel::setFreezeMode(int row, FreezeMode mode) {
+    if (row < 0 || row >= (int)entries_.size()) return;
+    entries_[row].freezeMode = mode;
+    emit dataChanged(index(row, 0), index(row, columnCount() - 1));
 }
 
 void AddressListModel::removeEntry(int row) {

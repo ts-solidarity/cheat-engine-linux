@@ -126,6 +126,8 @@ public:
     void addEntry(uintptr_t addr, ce::ValueType type, const QString& desc = "No description");
     void removeEntry(int row);
     void removeEntries(QList<int> rows);
+    void setFreezeMode(int row, ce::FreezeMode mode);
+    const std::vector<AddressEntry>& entries() const { return entries_; }
     void setProcess(ce::ProcessHandle* proc) { proc_ = proc; }
     void updateValues(ce::ProcessHandle* proc);
     void freezeWrite(ce::ProcessHandle* proc);
