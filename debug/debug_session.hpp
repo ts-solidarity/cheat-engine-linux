@@ -1,0 +1,96 @@
+#pragma once
+/// Debug session — persistent ptrace attachment with event loop, software breakpoints, stepping.
+
+#include "debug/breakpoint_manager.hpp"
+#include "platform/process_api.hpp"
+#include <thread>
+#include <atomic>
+#include <functional>
+#include <unordered_map>
+#include <mutex>
+
+namespace ce {
+
+enum class StepMode { Into, Over, Out, RunToCursor };
+
+enum class DebugEventType {
+    BreakpointHit,
+    SingleStep,
+    ProcessExited,
+    SignalReceived,
+};
+
+struct DebugEvent {
+    DebugEventType type;
+    pid_t tid;
+    uintptr_t address;
+    int signal;
+    CpuContext context;
+};
+
+class DebugSession {
+public:
+    DebugSession() = default;
+    ~DebugSession();
+
+    /// Attach to a process and start the debug event loop.
+    bool attach(pid_t pid, ProcessHandle* proc);
+
+    /// Detach and stop the event loop.
+    void detach();
+
+    bool isAttached() const { return attached_.load(); }
+    pid_t pid() const { return pid_; }
+
+    /// Set a software breakpoint (int3). Returns breakpoint ID.
+    int setSoftwareBreakpoint(uintptr_t address);
+
+    /// Remove a software breakpoint.
+    void removeSoftwareBreakpoint(int id);
+
+    /// Continue execution after a break.
+    void continueExecution();
+
+    /// Step (into, over, out, run to cursor).
+    void step(StepMode mode, uintptr_t targetAddress = 0);
+
+    /// Is the process currently stopped?
+    bool isStopped() const { return stopped_.load(); }
+
+    /// Get the current stop context.
+    CpuContext getStopContext() const;
+
+    /// Callback for debug events.
+    using EventCallback = std::function<void(const DebugEvent&)>;
+    void setEventCallback(EventCallback cb) { eventCb_ = std::move(cb); }
+
+    /// Access breakpoint manager.
+    BreakpointManager& breakpoints() { return bpManager_; }
+
+private:
+    void eventLoop();
+
+    pid_t pid_ = 0;
+    ProcessHandle* proc_ = nullptr;
+    std::atomic<bool> attached_{false};
+    std::atomic<bool> stopped_{false};
+    std::thread eventThread_;
+    BreakpointManager bpManager_;
+    EventCallback eventCb_;
+
+    // Software breakpoint tracking
+    struct SoftBp {
+        int id;
+        uintptr_t address;
+        uint8_t originalByte;
+        bool active;
+    };
+    std::mutex bpMutex_;
+    std::unordered_map<uintptr_t, SoftBp> softBreakpoints_;
+    int nextSoftBpId_ = 1;
+
+    CpuContext stopContext_;
+    mutable std::mutex contextMutex_;
+};
+
+} // namespace ce

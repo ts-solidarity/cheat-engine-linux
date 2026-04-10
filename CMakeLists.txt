@@ -62,6 +62,7 @@ add_library(cecore SHARED
     debug/breakpoint_manager.cpp
     debug/code_finder.cpp
     debug/tracer.cpp
+    debug/debug_session.cpp
     scanner/memory_scanner.cpp
     scanner/pointer_scanner.cpp
     scripting/lua_engine.cpp

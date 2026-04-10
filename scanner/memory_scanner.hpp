@@ -19,6 +19,10 @@ struct ScanConfig {
     uintptr_t   stopAddress  = 0x7FFFFFFFFFFF;
     bool        scanWritableOnly   = false;
     bool        scanExecutableOnly = false;
+    int         roundingType       = 0;   // 0=exact, 1=rounded, 2=truncated
+    double      floatTolerance     = 0.0; // For rounded comparison
+    bool        percentageScan     = false;
+    double      percentageValue    = 0.0;
 
     // Search values (interpretation depends on valueType + compareType)
     int64_t     intValue     = 0;
