@@ -1,0 +1,80 @@
+#pragma once
+/// Auto-assembler engine — parses CE-style scripts and injects code into processes.
+
+#include "platform/process_api.hpp"
+#include "arch/assembler.hpp"
+#include "scanner/memory_scanner.hpp"
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <functional>
+
+namespace ce {
+
+/// Tracks state needed to disable (undo) an auto-assembler script.
+struct DisableInfo {
+    struct AllocEntry { std::string name; uintptr_t address; size_t size; };
+    struct OriginalBytes { uintptr_t address; std::vector<uint8_t> bytes; };
+
+    std::vector<AllocEntry> allocs;
+    std::vector<OriginalBytes> originals;
+    std::unordered_map<std::string, uintptr_t> symbols;
+};
+
+/// Result of auto-assembler execution.
+struct AutoAsmResult {
+    bool success = false;
+    std::string error;
+    DisableInfo disableInfo;
+    std::vector<std::string> log; // Execution log messages
+};
+
+/// The auto-assembler engine.
+class AutoAssembler {
+public:
+    AutoAssembler() = default;
+
+    /// Execute an auto-assembler script (enable section).
+    AutoAsmResult execute(ProcessHandle& proc, const std::string& script);
+
+    /// Execute the disable section of a script, using saved DisableInfo.
+    AutoAsmResult disable(ProcessHandle& proc, const std::string& script, const DisableInfo& info);
+
+    /// Syntax check only (no memory modifications).
+    AutoAsmResult check(const std::string& script);
+
+    /// Register a global symbol (accessible to scripts).
+    void registerSymbol(const std::string& name, uintptr_t address);
+    void unregisterSymbol(const std::string& name);
+    uintptr_t resolveSymbol(const std::string& name) const;
+
+private:
+    // ── Internal types ──
+    struct Alloc { std::string name; size_t size; uintptr_t preferred; uintptr_t address; };
+    struct Label { std::string name; uintptr_t address; };
+    struct Define { std::string name; std::string value; };
+    struct AsmLine { std::string label; std::string code; uintptr_t targetAddr; };
+    struct WriteBlock { uintptr_t address; std::vector<uint8_t> bytes; };
+
+    // ── Parsing ──
+    std::string extractSection(const std::string& script, const std::string& section);
+    void parseLine(const std::string& line,
+        std::vector<Alloc>& allocs, std::vector<Label>& labels,
+        std::vector<Define>& defines, std::vector<std::string>& registeredSymbols,
+        std::vector<std::string>& asmLines, std::vector<std::string>& log,
+        ProcessHandle* proc);
+
+    // ── Resolution ──
+    uintptr_t resolveAddress(const std::string& expr,
+        const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
+        const std::vector<Define>& defines) const;
+    std::string substituteSymbols(const std::string& line,
+        const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
+        const std::vector<Define>& defines) const;
+
+    // ── Global symbol table ──
+    std::unordered_map<std::string, uintptr_t> globalSymbols_;
+    Assembler asm64_{AsmArch::X86_64};
+};
+
+} // namespace ce
