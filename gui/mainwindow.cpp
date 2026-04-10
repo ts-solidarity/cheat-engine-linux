@@ -22,6 +22,9 @@
 #include <QMenu>
 #include <QShortcut>
 #include <QInputDialog>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <QFileDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -130,6 +133,37 @@ void MainWindow::setupMenus() {
         console->setAttribute(Qt::WA_DeleteOnClose);
         console->show();
     }, QKeySequence("Ctrl+Shift+L"));
+    tools->addSeparator();
+    tools->addAction("Speedhack...", this, [this]() {
+        auto* dlg = new QDialog(this);
+        dlg->setWindowTitle("Speedhack");
+        dlg->resize(300, 120);
+        auto* layout = new QVBoxLayout(dlg);
+        auto* label = new QLabel("Speed: 1.0x");
+        auto* slider = new QSlider(Qt::Horizontal);
+        slider->setRange(1, 100);  // 0.1x to 10.0x
+        slider->setValue(10);      // 1.0x default
+        connect(slider, &QSlider::valueChanged, [label](int v) {
+            double speed = v / 10.0;
+            label->setText(QString("Speed: %1x").arg(speed, 0, 'f', 1));
+        });
+        auto* applyBtn = new QPushButton("Apply (writes /dev/shm/ce_speedhack)");
+        connect(applyBtn, &QPushButton::clicked, [slider]() {
+            double speed = slider->value() / 10.0;
+            int shmfd = ::open("/dev/shm/ce_speedhack", O_CREAT | O_RDWR, 0666);
+            if (shmfd >= 0) {
+                ::ftruncate(shmfd, sizeof(double));
+                void* mem = ::mmap(nullptr, sizeof(double), PROT_READ|PROT_WRITE, MAP_SHARED, shmfd, 0);
+                if (mem != MAP_FAILED) { *(double*)mem = speed; ::munmap(mem, sizeof(double)); }
+                ::close(shmfd);
+            }
+        });
+        layout->addWidget(label);
+        layout->addWidget(slider);
+        layout->addWidget(applyBtn);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->show();
+    });
 
     auto* help = menuBar()->addMenu("&Help");
     help->addAction("About", this, [this]() {

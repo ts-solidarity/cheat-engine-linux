@@ -17,6 +17,7 @@
 #include <QSplitter>
 #include <QGroupBox>
 #include <QProgressBar>
+#include <QSlider>
 
 namespace ce::gui {
 

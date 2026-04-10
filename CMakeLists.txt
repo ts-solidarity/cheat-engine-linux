@@ -55,6 +55,7 @@ add_library(cecore SHARED
     platform/linux/linux_process.cpp
     platform/linux/ptrace_wrapper.cpp
     platform/linux/injector.cpp
+    platform/linux/process_watcher.cpp
     platform/linux/ceserver_stubs.c
     arch/disassembler.cpp
     arch/assembler.cpp
@@ -108,6 +109,7 @@ if(Qt6_FOUND)
         gui/memoryregions.cpp
         gui/threadlist.cpp
         gui/settingsdialog.cpp
+        gui/memoryfill.cpp
         scripting/lua_gui.cpp
     )
     target_include_directories(cheatengine PRIVATE ${LUA_DIR})
