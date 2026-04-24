@@ -102,6 +102,7 @@ if(Qt6_FOUND)
         gui/memorybrowser.cpp
         gui/scripteditor.cpp
         gui/pointerscan_dialog.cpp
+        gui/registereditor.cpp
         gui/structuredissector.cpp
         gui/luaconsole.cpp
         gui/breakpointlist.cpp

@@ -1,5 +1,6 @@
 #include "gui/mainwindow.hpp"
 #include "gui/processlistdialog.hpp"
+#include "gui/registereditor.hpp"
 #include "gui/memorybrowser.hpp"
 #include "gui/scripteditor.hpp"
 #include "gui/pointerscan_dialog.hpp"
@@ -119,6 +120,12 @@ void MainWindow::setupMenus() {
     view->addAction("Stack View", this, [this]() {
         if (!process_) return;
         auto* w = new StackViewWindow(process_.get(), this);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        w->show();
+    });
+    view->addAction("Register Editor", this, [this]() {
+        if (!process_) return;
+        auto* w = new RegisterEditorWindow(process_.get(), this);
         w->setAttribute(Qt::WA_DeleteOnClose);
         w->show();
     });
