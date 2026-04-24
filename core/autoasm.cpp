@@ -118,6 +118,79 @@ static size_t findAobInRange(ProcessHandle& proc, uintptr_t start, uintptr_t sto
     return matches;
 }
 
+static std::vector<std::string> splitDataValues(const std::string& data) {
+    std::vector<std::string> values;
+    std::string current;
+    char quote = 0;
+
+    for (char c : data) {
+        if ((c == '"' || c == '\'') && (quote == 0 || quote == c)) {
+            quote = quote == c ? 0 : c;
+            current.push_back(c);
+            continue;
+        }
+        if (quote == 0 && (c == ',' || std::isspace(static_cast<unsigned char>(c)))) {
+            if (!trim(current).empty()) {
+                values.push_back(trim(current));
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(c);
+    }
+
+    if (!trim(current).empty())
+        values.push_back(trim(current));
+    return values;
+}
+
+static bool parseDataDirective(const std::string& op, const std::string& data,
+                               std::vector<uint8_t>& bytes, std::string& error) {
+    size_t width = 1;
+    if (op == "DW") width = 2;
+    else if (op == "DD") width = 4;
+    else if (op == "DQ") width = 8;
+
+    auto values = splitDataValues(data);
+    if (values.empty()) {
+        error = op + " requires at least one value";
+        return false;
+    }
+
+    uint64_t maxValue = width == 8 ? UINT64_MAX : ((uint64_t{1} << (width * 8)) - 1);
+    for (auto token : values) {
+        token = trim(token);
+        if (token.size() >= 2 &&
+            ((token.front() == '"' && token.back() == '"') || (token.front() == '\'' && token.back() == '\''))) {
+            if (width != 1) {
+                error = op + " string literal is only supported for DB";
+                return false;
+            }
+            auto text = stripOptionalQuotes(token);
+            bytes.insert(bytes.end(), text.begin(), text.end());
+            continue;
+        }
+
+        uint64_t value = 0;
+        try {
+            value = std::stoull(token, nullptr, 16);
+        } catch (...) {
+            error = "Invalid " + op + " value: " + token;
+            return false;
+        }
+
+        if (value > maxValue) {
+            error = op + " value out of range: " + token;
+            return false;
+        }
+
+        for (size_t i = 0; i < width; ++i)
+            bytes.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+
+    return true;
+}
+
 // Parse "name, size [, preferred]" from inside ALLOC(...)
 static bool parseAllocArgs(const std::string& args, std::string& name, size_t& size, uintptr_t& preferred) {
     std::istringstream ss(args);
@@ -821,14 +894,13 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         if (startsWith(upper, "DB ") || startsWith(upper, "DW ") ||
             startsWith(upper, "DD ") || startsWith(upper, "DQ ")) {
 
+            auto op = upper.substr(0, 2);
             auto dataStr = trim(trimmedLine.substr(3));
             std::vector<uint8_t> dataBytes;
-
-            // Parse hex bytes
-            std::istringstream dss(dataStr);
-            std::string tok;
-            while (dss >> tok) {
-                try { dataBytes.push_back((uint8_t)std::stoul(tok, nullptr, 16)); } catch (...) {}
+            std::string parseError;
+            if (!parseDataDirective(op, dataStr, dataBytes, parseError)) {
+                result.error = parseError;
+                return result;
             }
 
             if (!dataBytes.empty()) {

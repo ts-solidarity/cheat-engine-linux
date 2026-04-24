@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <csignal>
 #include <unistd.h>
@@ -90,6 +91,54 @@ static void test_autoassembler_dealloc(pid_t pid) {
 
     bool ok = allocResult.success && deallocResult.success && sawDeallocLog;
     printf("  dealloc: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_autoassembler_data_directive_widths(pid_t pid) {
+    printf("\n── Test: AutoAssembler db/dw/dd/dq widths ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+
+    auto allocResult = proc.allocate(4096, MemProt::All);
+    if (!allocResult) {
+        printf("  db/dw/dd/dq widths: FAILED\n");
+        return;
+    }
+    uintptr_t addr = *allocResult;
+
+    char script[512];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "%lx:\n"
+        "db 01, \"A\"\n"
+        "dw 0203\n"
+        "dd 04050607\n"
+        "dq 08090A0B0C0D0E0F\n",
+        addr);
+
+    auto result = aa.execute(proc, script);
+    const uint8_t expected[] = {
+        0x01, 0x41,
+        0x03, 0x02,
+        0x07, 0x06, 0x05, 0x04,
+        0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08
+    };
+    uint8_t actual[sizeof(expected)] = {};
+    proc.read(addr, actual, sizeof(actual));
+
+    auto badResult = aa.execute(proc,
+        "[ENABLE]\n"
+        "alloc(widthbad, 16)\n"
+        "widthbad:\n"
+        "dw 10000\n");
+
+    bool ok = result.success &&
+        std::memcmp(actual, expected, sizeof(actual)) == 0 &&
+        !badResult.success &&
+        badResult.error.find("out of range") != std::string::npos;
+
+    proc.free(addr, 4096);
+    printf("  db/dw/dd/dq widths: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_aobscanmodule(pid_t pid) {
@@ -324,6 +373,7 @@ int main(int argc, char* argv[]) {
     test_cheat_table_json();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
+    test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_aobscanregion(targetPid);
     test_autoassembler_requires_target(targetPid);
