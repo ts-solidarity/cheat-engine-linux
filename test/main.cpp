@@ -370,6 +370,24 @@ static void test_lua_file_aliases() {
     printf("  readFile/writeFile: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_autoassemble_check() {
+    printf("\n── Test: Lua autoAssembleCheck ──\n");
+
+    LuaEngine lua;
+    std::string script = R"lua(
+local ok, msg = autoAssembleCheck([[
+alloc(lua_check_block, 64)
+lua_check_block:
+db 90
+]])
+assert(ok == true and msg == nil)
+)lua";
+
+    auto err = lua.execute(script);
+
+    printf("  autoAssembleCheck: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -513,6 +531,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
     test_lua_file_aliases();
+    test_lua_autoassemble_check();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

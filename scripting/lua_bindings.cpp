@@ -285,6 +285,19 @@ static int l_autoAssemble(lua_State* L) {
     return 2;
 }
 
+static int l_autoAssembleCheck(lua_State* L) {
+    const char* script = luaL_checkstring(L, 1);
+
+    AutoAssembler aa;
+    auto result = aa.check(script);
+    lua_pushboolean(L, result.success);
+    if (!result.success)
+        lua_pushstring(L, result.error.c_str());
+    else
+        lua_pushnil(L);
+    return 2;
+}
+
 // ── Utility ──
 
 static int l_showMessage(lua_State* L) {
@@ -719,6 +732,7 @@ void registerExtendedBindings(lua_State* L) {
     lua_register(L, "disassemble", l_disassemble);
     lua_register(L, "assemble", l_assemble);
     lua_register(L, "autoAssemble", l_autoAssemble);
+    lua_register(L, "autoAssembleCheck", l_autoAssembleCheck);
 
     // Utility
     lua_register(L, "showMessage", l_showMessage);
