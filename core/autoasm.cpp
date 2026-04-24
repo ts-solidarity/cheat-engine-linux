@@ -416,26 +416,39 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         if (trimmedLine.back() == ':' && trimmedLine.find(' ') == std::string::npos) {
             auto labelName = trimmedLine.substr(0, trimmedLine.size() - 1);
 
-            // Is this an alloc name? Set currentAddr
+            bool handledLabel = false;
+
+            // Is this an alloc name? Set currentAddr to that block.
             for (auto& a : allocs) {
                 if (a.name == labelName) {
                     currentAddr = a.address;
+                    handledLabel = true;
                     break;
                 }
             }
+            if (handledLabel) continue;
 
-            // Is this a known label? Update its address
+            // Is this a declared internal label? Bind it to the active block address.
             for (auto& l : labels) {
                 if (l.name == labelName) {
+                    if (currentAddr == 0) {
+                        result.error = "Label has no active assembly address: " + labelName;
+                        return result;
+                    }
                     l.address = currentAddr;
+                    handledLabel = true;
                     break;
                 }
             }
+            if (handledLabel) continue;
 
-            // Could be an address expression (game.exe+1234:)
-            if (currentAddr == 0) {
-                currentAddr = resolveAddress(labelName, allocs, labels, defines);
+            // Otherwise this must be a target address expression (game.exe+1234:).
+            auto targetAddr = resolveAddress(labelName, allocs, labels, defines);
+            if (targetAddr == 0) {
+                result.error = "Unresolved auto-assembler target: " + labelName;
+                return result;
             }
+            currentAddr = targetAddr;
             continue;
         }
 
@@ -565,12 +578,15 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             continue;
         }
 
-        if (currentAddr == 0) continue;
-
         if (startsWith(trimmedLine, "__CREATETHREAD__:") || startsWith(trimmedLine, "__CREATETHREADANDWAIT__:")) {
             // Defer to after all writes — store address expression for later
             result.log.push_back("Deferred: " + trimmedLine);
             continue;
+        }
+
+        if (currentAddr == 0) {
+            result.error = "No active assembly address for line: " + trimmedLine;
+            return result;
         }
         if (startsWith(trimmedLine, "__REASSEMBLE__:")) {
             auto addrExpr = trimmedLine.substr(15);

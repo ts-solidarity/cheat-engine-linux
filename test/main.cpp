@@ -91,6 +91,17 @@ static void test_autoassembler_dealloc(pid_t pid) {
     printf("  dealloc: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_requires_target(pid_t pid) {
+    printf("\n── Test: AutoAssembler requires target ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+
+    auto result = aa.execute(proc, "[ENABLE]\nmov eax, 1\n");
+    bool ok = !result.success && result.error.find("No active assembly address") != std::string::npos;
+    printf("  missing target: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -224,6 +235,7 @@ int main(int argc, char* argv[]) {
     test_cheat_table_json();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
+    test_autoassembler_requires_target(targetPid);
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);
