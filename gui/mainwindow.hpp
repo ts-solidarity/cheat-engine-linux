@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/linux/linux_process.hpp"
+#include "platform/linux/ptrace_wrapper.hpp"
 #include "scanner/memory_scanner.hpp"
 #include "core/autoasm.hpp"
 #include "scripting/lua_engine.hpp"
@@ -49,6 +50,7 @@ private:
     void setupMenus();
     void loadAddressEntries(const QJsonArray& entries);
     void updateScanButtons();
+    void startCodeFinder(int row, bool writesOnly);
 
     // Process
     std::unique_ptr<os::LinuxProcessHandle> process_;
@@ -59,6 +61,8 @@ private:
     AutoAssembler autoAsm_;
     LuaEngine luaEngine_;
     BreakpointManager bpManager_;
+    std::vector<std::unique_ptr<CodeFinder>> codeFinders_;
+    std::vector<std::unique_ptr<os::LinuxDebugger>> codeFinderDebuggers_;
     std::unique_ptr<ScanResult> lastResult_;
     std::unique_ptr<ScanResult> undoResult_;
 

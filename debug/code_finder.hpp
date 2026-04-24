@@ -23,6 +23,7 @@ struct CodeFinderResult {
 class CodeFinder {
 public:
     CodeFinder() = default;
+    ~CodeFinder() { stop(); }
 
     /// Start monitoring an address for reads (access) or writes only.
     /// Runs in a background thread. Call stop() to finish.

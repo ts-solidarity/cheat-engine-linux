@@ -6,6 +6,7 @@
 #include "gui/structuredissector.hpp"
 #include "gui/luaconsole.hpp"
 #include "gui/breakpointlist.hpp"
+#include "gui/codefinder.hpp"
 #include "gui/memoryregions.hpp"
 #include "gui/threadlist.hpp"
 #include "gui/settingsdialog.hpp"
@@ -366,6 +367,14 @@ void MainWindow::setupUi() {
                     browser->show();
                 }
             });
+            menu.addAction("Find what accesses this address", [this, selected]() {
+                if (!selected.isEmpty())
+                    startCodeFinder(selected.first().row(), false);
+            });
+            menu.addAction("Find what writes to this address", [this, selected]() {
+                if (!selected.isEmpty())
+                    startCodeFinder(selected.first().row(), true);
+            });
         }
 
         menu.addSeparator();
@@ -720,6 +729,33 @@ void MainWindow::loadAddressEntries(const QJsonArray& entries) {
         QMessageBox::warning(this, "Auto-assembler activation failed",
             failures.join('\n'));
     }
+}
+
+void MainWindow::startCodeFinder(int row, bool writesOnly) {
+    if (!process_) return;
+
+    const auto& entries = addressListModel_->entries();
+    if (row < 0 || row >= (int)entries.size()) return;
+    const auto& entry = entries[row];
+    if (entry.isGroup) return;
+
+    auto debugger = std::make_unique<os::LinuxDebugger>();
+    auto finder = std::make_unique<CodeFinder>();
+    if (!finder->start(*process_, *debugger, entry.address, writesOnly)) {
+        QMessageBox::warning(this, "Code finder unavailable",
+            "Could not start hardware watchpoint monitoring for this address.");
+        return;
+    }
+
+    auto* finderPtr = finder.get();
+    codeFinderDebuggers_.push_back(std::move(debugger));
+    codeFinders_.push_back(std::move(finder));
+
+    auto title = writesOnly ? "Find what writes" : "Find what accesses";
+    auto* window = new CodeFinderWindow(finderPtr,
+        QString("%1 0x%2").arg(title).arg(entry.address, 0, 16), this);
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->show();
 }
 
 void MainWindow::onMemoryView() {
