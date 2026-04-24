@@ -66,6 +66,20 @@ static std::string formatHex(uintptr_t address) {
     return buf;
 }
 
+static bool parseWholeUnsigned(const std::string& text, int base, uint64_t& value) {
+    auto s = trim(text);
+    if (s.empty())
+        return false;
+
+    size_t parsed = 0;
+    try {
+        value = std::stoull(s, &parsed, base);
+    } catch (...) {
+        return false;
+    }
+    return parsed == s.size();
+}
+
 static bool moduleMatches(const ModuleInfo& module, const std::string& requested) {
     auto req = stripOptionalQuotes(requested);
     auto reqUpper = toUpper(req);
@@ -524,15 +538,14 @@ uintptr_t AutoAssembler::resolveAddress(const std::string& expr,
     // Check defines
     for (auto& d : defines)
         if (d.name == name) {
-            try { return std::stoull(d.value, nullptr, 16); } catch (...) {}
+            uint64_t parsed = 0;
+            if (parseWholeUnsigned(d.value, 16, parsed))
+                return static_cast<uintptr_t>(parsed);
         }
 
     // Check global symbols
     auto it = globalSymbols_.find(name);
     if (it != globalSymbols_.end()) return it->second;
-
-    // Try as hex address
-    try { return std::stoull(name, nullptr, 16); } catch (...) {}
 
     // Try module+offset format (module.exe+1234)
     auto plus = name.find('+');
@@ -541,9 +554,16 @@ uintptr_t AutoAssembler::resolveAddress(const std::string& expr,
         auto offset = name.substr(plus + 1);
         auto baseAddr = resolveAddress(base, allocs, labels, defines);
         if (baseAddr) {
-            try { return baseAddr + std::stoull(offset, nullptr, 16); } catch (...) {}
+            uint64_t parsedOffset = 0;
+            if (parseWholeUnsigned(offset, 16, parsedOffset))
+                return baseAddr + static_cast<uintptr_t>(parsedOffset);
         }
     }
+
+    // Try as hex address
+    uint64_t parsed = 0;
+    if (parseWholeUnsigned(name, 16, parsed))
+        return static_cast<uintptr_t>(parsed);
 
     return 0;
 }

@@ -157,8 +157,8 @@ static void test_autoassembler_nop_fillmem(pid_t pid) {
         "[ENABLE]\n"
         "%lx:\n"
         "nop 3\n"
-        "fillmem(%lx, 4, CC)\n",
-        addr, addr + 3);
+        "fillmem(%lx+3, 4, CC)\n",
+        addr, addr);
 
     AutoAssembler aa;
     auto result = aa.execute(proc, script);
