@@ -108,6 +108,7 @@ if(Qt6_FOUND)
         gui/codefinder.cpp
         gui/memoryregions.cpp
         gui/modulelist.cpp
+        gui/stackview.cpp
         gui/threadlist.cpp
         gui/settingsdialog.cpp
         gui/memoryfill.cpp

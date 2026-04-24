@@ -9,6 +9,7 @@
 #include "gui/codefinder.hpp"
 #include "gui/memoryregions.hpp"
 #include "gui/modulelist.hpp"
+#include "gui/stackview.hpp"
 #include "gui/threadlist.hpp"
 #include "gui/settingsdialog.hpp"
 #include "core/ct_file.hpp"
@@ -112,6 +113,12 @@ void MainWindow::setupMenus() {
     view->addAction("Thread List", this, [this]() {
         if (!process_) return;
         auto* w = new ThreadListWindow(process_.get(), this);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        w->show();
+    });
+    view->addAction("Stack View", this, [this]() {
+        if (!process_) return;
+        auto* w = new StackViewWindow(process_.get(), this);
         w->setAttribute(Qt::WA_DeleteOnClose);
         w->show();
     });
