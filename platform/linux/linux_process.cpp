@@ -109,7 +109,12 @@ std::vector<MemoryRegion> LinuxProcessHandle::queryRegions() {
             while (!r.path.empty() && r.path.back() == ' ') r.path.pop_back();
         }
 
-        r.type = (!r.path.empty() && r.path[0] == '/') ? MemType::Image : MemType::Private;
+        if (!r.path.empty() && r.path[0] == '/')
+            r.type = MemType::Image;
+        else if (perms.size() > 3 && perms[3] == 's')
+            r.type = MemType::Mapped;
+        else
+            r.type = MemType::Private;
         regions.push_back(std::move(r));
     }
     return regions;

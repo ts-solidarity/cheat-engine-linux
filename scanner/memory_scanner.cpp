@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cmath>
 #include <type_traits>
+#include <stdexcept>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -293,6 +294,15 @@ bool compareMaskedBytes(const uint8_t* currentVal,
     return true;
 }
 
+bool memoryTypeAllowed(const ScanConfig& config, MemType type) {
+    switch (type) {
+        case MemType::Private: return config.scanPrivate;
+        case MemType::Image:   return config.scanImage;
+        case MemType::Mapped:  return config.scanMapped;
+    }
+    return false;
+}
+
 } // anonymous namespace
 
 // ── AOB pattern parser ──
@@ -473,6 +483,9 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
     cancelled_.store(false);
     progress_.store(0);
 
+    if (config.valueType == ValueType::Custom)
+        throw std::invalid_argument("ValueType::Custom requires a registered custom scanner");
+
     // Get memory regions
     auto regions = proc.queryRegions();
 
@@ -485,6 +498,7 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
         if (r.base >= config.stopAddress) continue;
         if (config.scanWritableOnly && !(r.protection & MemProt::Write)) continue;
         if (config.scanExecutableOnly && !(r.protection & MemProt::Exec)) continue;
+        if (!memoryTypeAllowed(config, r.type)) continue;
         scanRegions.push_back(r);
     }
 
@@ -634,6 +648,9 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
 ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config, const ScanResult& previous) {
     cancelled_.store(false);
     progress_.store(0);
+
+    if (config.valueType == ValueType::Custom)
+        throw std::invalid_argument("ValueType::Custom requires a registered custom scanner");
 
     size_t valueSize = valueSizeForConfig(config);
     auto resultDir = makeScanDir();
