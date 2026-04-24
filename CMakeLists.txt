@@ -107,6 +107,7 @@ if(Qt6_FOUND)
         gui/luaconsole.cpp
         gui/breakpointlist.cpp
         gui/codefinder.cpp
+        gui/codereferences.cpp
         gui/memoryregions.cpp
         gui/modulelist.cpp
         gui/stackview.cpp

@@ -31,6 +31,9 @@ public:
     /// Find referenced strings (LEA instructions pointing to readable data).
     std::vector<CodeRef> findReferencedStrings(ProcessHandle& proc, const ModuleInfo& module);
 
+    /// Find direct call targets inside a module.
+    std::vector<CodeRef> findReferencedFunctions(ProcessHandle& proc, const ModuleInfo& module);
+
     /// Find code caves (runs of 0x00 or 0xCC bytes).
     std::vector<CodeCave> findCodeCaves(ProcessHandle& proc, const ModuleInfo& module, size_t minSize = 16);
 

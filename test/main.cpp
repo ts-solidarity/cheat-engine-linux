@@ -2,6 +2,7 @@
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
+#include "analysis/code_analysis.hpp"
 #include "debug/breakpoint_manager.hpp"
 #include "scripting/lua_engine.hpp"
 
@@ -18,6 +19,68 @@
 
 using namespace ce;
 using namespace ce::os;
+
+class FakeProcessHandle final : public ProcessHandle {
+public:
+    struct Segment {
+        MemoryRegion region;
+        std::vector<uint8_t> data;
+    };
+
+    explicit FakeProcessHandle(std::vector<Segment> segments, std::vector<ModuleInfo> modules)
+        : segments_(std::move(segments)), modules_(std::move(modules)) {}
+
+    pid_t pid() const override { return getpid(); }
+    bool is64bit() const override { return true; }
+
+    Result<size_t> read(uintptr_t address, void* buffer, size_t size) override {
+        for (const auto& segment : segments_) {
+            auto start = segment.region.base;
+            auto end = start + segment.data.size();
+            if (address < start || address >= end) continue;
+            auto offset = address - start;
+            auto count = std::min<size_t>(size, segment.data.size() - offset);
+            std::memcpy(buffer, segment.data.data() + offset, count);
+            return count;
+        }
+        return std::unexpected(std::make_error_code(std::errc::bad_address));
+    }
+
+    Result<size_t> write(uintptr_t, const void*, size_t) override {
+        return std::unexpected(std::make_error_code(std::errc::not_supported));
+    }
+
+    std::vector<MemoryRegion> queryRegions() override {
+        std::vector<MemoryRegion> regions;
+        for (const auto& segment : segments_) regions.push_back(segment.region);
+        return regions;
+    }
+
+    std::optional<MemoryRegion> queryRegion(uintptr_t address) override {
+        for (const auto& segment : segments_) {
+            auto start = segment.region.base;
+            auto end = start + segment.region.size;
+            if (address >= start && address < end) return segment.region;
+        }
+        return std::nullopt;
+    }
+
+    Result<uintptr_t> allocate(size_t, MemProt, uintptr_t = 0) override {
+        return std::unexpected(std::make_error_code(std::errc::not_supported));
+    }
+    Result<void> free(uintptr_t, size_t) override {
+        return std::unexpected(std::make_error_code(std::errc::not_supported));
+    }
+    Result<void> protect(uintptr_t, size_t, MemProt) override {
+        return std::unexpected(std::make_error_code(std::errc::not_supported));
+    }
+    std::vector<ModuleInfo> modules() override { return modules_; }
+    std::vector<ThreadInfo> threads() override { return {}; }
+
+private:
+    std::vector<Segment> segments_;
+    std::vector<ModuleInfo> modules_;
+};
 
 static void test_cheat_table_json() {
     printf("\n── Test: CheatTable Round Trip ──\n");
@@ -82,6 +145,39 @@ static void test_cheat_table_json() {
 
     printf("  JSON round trip: %s\n", jsonOk ? "OK" : "FAILED");
     printf("  CT XML round trip: %s\n", xmlOk ? "OK" : "FAILED");
+}
+
+static void test_code_analysis_references() {
+    printf("\n── Test: Code Analysis References ──\n");
+
+    const uintptr_t codeBase = 0x1000;
+    const uintptr_t stringBase = 0x2000;
+    const uintptr_t callTarget = 0x3000;
+
+    std::vector<uint8_t> code = {
+        0x48, 0x8d, 0x05, 0xf9, 0x0f, 0x00, 0x00, // lea rax, [rip + 0xff9] -> 0x2000
+        0xe8, 0xf4, 0x1f, 0x00, 0x00,             // call 0x3000
+        0xc3                                            // ret
+    };
+    std::vector<uint8_t> text = {'h', 'e', 'l', 'l', 'o', ' ', 'c', 'e', 0};
+
+    ModuleInfo module{codeBase, 0x1000, "fake.so", "/tmp/fake.so", true};
+    FakeProcessHandle proc({
+        {{codeBase, code.size(), MemProt::ReadExec, MemType::Image, MemState::Committed, module.path}, code},
+        {{stringBase, text.size(), MemProt::Read, MemType::Image, MemState::Committed, module.path}, text},
+    }, {module});
+
+    CodeAnalyzer analyzer;
+    auto strings = analyzer.findReferencedStrings(proc, module);
+    auto functions = analyzer.findReferencedFunctions(proc, module);
+
+    bool stringOk = strings.size() == 1 && strings[0].address == codeBase &&
+        strings[0].target == stringBase && strings[0].text == "hello ce";
+    bool functionOk = functions.size() == 1 && functions[0].address == codeBase + 7 &&
+        functions[0].target == callTarget;
+
+    printf("  Referenced strings: %s\n", stringOk ? "OK" : "FAILED");
+    printf("  Referenced functions: %s\n", functionOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {
@@ -821,6 +917,7 @@ int main(int argc, char* argv[]) {
     }
 
     test_cheat_table_json();
+    test_code_analysis_references();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_data_directive_widths(targetPid);
