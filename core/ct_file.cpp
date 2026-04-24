@@ -69,6 +69,8 @@ bool CheatTable::save(const std::string& path) const {
 
     if (!gameName.empty())
         f << "  <GameName>" << xmlEscape(gameName) << "</GameName>\n";
+    if (!gameVersion.empty())
+        f << "  <GameVersion>" << xmlEscape(gameVersion) << "</GameVersion>\n";
     if (!author.empty())
         f << "  <Author>" << xmlEscape(author) << "</Author>\n";
     if (!comment.empty())
@@ -399,11 +401,14 @@ bool CheatTable::load(const std::string& path) {
     if (!f) return false;
 
     std::string xml((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    auto entriesStart = xml.find("<CheatEntries>");
+    auto headerXml = entriesStart == std::string::npos ? xml : xml.substr(0, entriesStart);
 
-    gameName = xmlUnescape(getTag(xml, "GameName"));
-    author = xmlUnescape(getTag(xml, "Author"));
-    comment = xmlUnescape(getTag(xml, "Comment"));
-    luaScript = xmlUnescape(getTag(xml, "LuaScript"));
+    gameName = xmlUnescape(getTag(headerXml, "GameName"));
+    gameVersion = xmlUnescape(getTag(headerXml, "GameVersion"));
+    author = xmlUnescape(getTag(headerXml, "Author"));
+    comment = xmlUnescape(getTag(headerXml, "Comment"));
+    luaScript = xmlUnescape(getTag(headerXml, "LuaScript"));
 
     // Parse CheatEntries
     entries.clear();
@@ -454,7 +459,10 @@ bool CheatTable::saveJson(const std::string& path) const {
 
     f << "{\n";
     f << "  \"game\": \"" << jsonEscape(gameName) << "\",\n";
+    f << "  \"version\": \"" << jsonEscape(gameVersion) << "\",\n";
     f << "  \"author\": \"" << jsonEscape(author) << "\",\n";
+    f << "  \"comment\": \"" << jsonEscape(comment) << "\",\n";
+    f << "  \"luaScript\": \"" << jsonEscape(luaScript) << "\",\n";
     f << "  \"entries\": [\n";
     for (size_t i = 0; i < entries.size(); ++i) {
         auto& e = entries[i];
@@ -470,6 +478,11 @@ bool CheatTable::saveJson(const std::string& path) const {
         if (e.active) f << ",\"active\":true";
         if (e.isGroup) f << ",\"group\":true";
         if (!e.autoAsmScript.empty()) f << ",\"asm\":\"" << jsonEscape(e.autoAsmScript) << "\"";
+        if (!e.luaScript.empty()) f << ",\"lua\":\"" << jsonEscape(e.luaScript) << "\"";
+        if (!e.color.empty()) f << ",\"color\":\"" << jsonEscape(e.color) << "\"";
+        if (!e.dropdownList.empty()) f << ",\"dropdown\":\"" << jsonEscape(e.dropdownList) << "\"";
+        if (!e.hotkeyKeys.empty()) f << ",\"hotkeys\":\"" << jsonEscape(e.hotkeyKeys) << "\"";
+        if (e.parentId >= 0) f << ",\"parent\":" << e.parentId;
         f << "}";
         if (i + 1 < entries.size()) f << ",";
         f << "\n";
@@ -488,6 +501,7 @@ bool CheatTable::loadJson(const std::string& path) {
         return false;
 
     gameName = jsonStringField(root, "game");
+    gameVersion = jsonStringField(root, "version");
     author = jsonStringField(root, "author");
     comment = jsonStringField(root, "comment");
     luaScript = jsonStringField(root, "luaScript");

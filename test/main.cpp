@@ -19,11 +19,14 @@ using namespace ce;
 using namespace ce::os;
 
 static void test_cheat_table_json() {
-    printf("\n── Test: CheatTable JSON Round Trip ──\n");
+    printf("\n── Test: CheatTable Round Trip ──\n");
 
     CheatTable table;
     table.gameName = "Example Game";
+    table.gameVersion = "1.2.3";
     table.author = "cecore";
+    table.comment = "Lua table metadata";
+    table.luaScript = "print('table lua')\nreturn 7\n";
 
     CheatEntry entry;
     entry.id = 7;
@@ -33,33 +36,51 @@ static void test_cheat_table_json() {
     entry.value = "100\n200";
     entry.active = true;
     entry.autoAsmScript = "[ENABLE]\nassert(1234, 90)\n";
+    entry.luaScript = "print('entry lua')\n";
+    entry.color = "FF00AA";
+    entry.dropdownList = "0:Off;1:On";
+    entry.hotkeyKeys = "Ctrl+H";
     table.entries.push_back(entry);
 
-    auto path = std::filesystem::temp_directory_path() /
+    auto jsonPath = std::filesystem::temp_directory_path() /
         ("cecore-table-" + std::to_string(getpid()) + ".json");
+    auto xmlPath = std::filesystem::temp_directory_path() /
+        ("cecore-table-" + std::to_string(getpid()) + ".CT");
 
-    if (!table.saveJson(path.string())) {
+    if (!table.saveJson(jsonPath.string()) || !table.save(xmlPath.string())) {
         printf("  Save FAILED\n");
         return;
     }
 
-    CheatTable loaded;
-    bool ok = loaded.loadJson(path.string());
-    std::filesystem::remove(path);
+    auto matchesTable = [&table, &entry](const CheatTable& loaded) {
+        return loaded.gameName == table.gameName &&
+            loaded.gameVersion == table.gameVersion &&
+            loaded.author == table.author &&
+            loaded.comment == table.comment &&
+            loaded.luaScript == table.luaScript &&
+            loaded.entries.size() == 1 &&
+            loaded.entries[0].id == entry.id &&
+            loaded.entries[0].description == entry.description &&
+            loaded.entries[0].address == entry.address &&
+            loaded.entries[0].type == entry.type &&
+            loaded.entries[0].value == entry.value &&
+            loaded.entries[0].active == entry.active &&
+            loaded.entries[0].autoAsmScript == entry.autoAsmScript &&
+            loaded.entries[0].luaScript == entry.luaScript &&
+            loaded.entries[0].color == entry.color &&
+            loaded.entries[0].dropdownList == entry.dropdownList &&
+            loaded.entries[0].hotkeyKeys == entry.hotkeyKeys;
+    };
 
-    bool matches = ok &&
-        loaded.gameName == table.gameName &&
-        loaded.author == table.author &&
-        loaded.entries.size() == 1 &&
-        loaded.entries[0].id == entry.id &&
-        loaded.entries[0].description == entry.description &&
-        loaded.entries[0].address == entry.address &&
-        loaded.entries[0].type == entry.type &&
-        loaded.entries[0].value == entry.value &&
-        loaded.entries[0].active == entry.active &&
-        loaded.entries[0].autoAsmScript == entry.autoAsmScript;
+    CheatTable jsonLoaded;
+    bool jsonOk = jsonLoaded.loadJson(jsonPath.string()) && matchesTable(jsonLoaded);
+    CheatTable xmlLoaded;
+    bool xmlOk = xmlLoaded.load(xmlPath.string()) && matchesTable(xmlLoaded);
+    std::filesystem::remove(jsonPath);
+    std::filesystem::remove(xmlPath);
 
-    printf("  JSON round trip: %s\n", matches ? "OK" : "FAILED");
+    printf("  JSON round trip: %s\n", jsonOk ? "OK" : "FAILED");
+    printf("  CT XML round trip: %s\n", xmlOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {
