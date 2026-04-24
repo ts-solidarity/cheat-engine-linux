@@ -33,8 +33,9 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     auto* tabs = new QTabWidget;
     stringsTable_ = new QTableWidget;
     functionsTable_ = new QTableWidget;
+    ripRelativeTable_ = new QTableWidget;
     cavesTable_ = new QTableWidget;
-    for (auto* table : {stringsTable_, functionsTable_}) {
+    for (auto* table : {stringsTable_, functionsTable_, ripRelativeTable_}) {
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({"Instruction", "Target", "Text"});
         table->horizontalHeader()->setStretchLastSection(true);
@@ -61,6 +62,7 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     });
     tabs->addTab(stringsTable_, "Referenced Strings");
     tabs->addTab(functionsTable_, "Referenced Functions");
+    tabs->addTab(ripRelativeTable_, "RIP-relative");
     tabs->addTab(cavesTable_, "Code Caves");
     layout->addWidget(tabs, 1);
 
@@ -96,15 +98,18 @@ void CodeReferencesWindow::analyzeSelectedModule() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(*proc_, module);
     auto functions = analyzer.findReferencedFunctions(*proc_, module);
+    auto ripRelative = analyzer.findRipRelativeInstructions(*proc_, module);
     auto caves = analyzer.findCodeCaves(*proc_, module, minCaveSizeSpin_->value());
 
     fillTable(stringsTable_, strings);
     fillTable(functionsTable_, functions);
+    fillTable(ripRelativeTable_, ripRelative);
     fillCavesTable(caves);
-    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 caves")
+    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 RIP-relative, %5 caves")
         .arg(QString::fromStdString(module.name))
         .arg(strings.size())
         .arg(functions.size())
+        .arg(ripRelative.size())
         .arg(caves.size()));
 }
 

@@ -123,7 +123,7 @@ std::vector<CodeRef> CodeAnalyzer::dissectModule(ProcessHandle& proc, const Modu
             else if (auto target = parseRipRelativeTarget(inst)) {
                 CodeRef ref;
                 ref.address = inst.address;
-                ref.type = RefType::String;
+                ref.type = RefType::RipRelative;
                 ref.text = inst.mnemonic + " " + inst.operands;
                 ref.target = *target;
                 refs.push_back(ref);
@@ -138,9 +138,10 @@ std::vector<CodeRef> CodeAnalyzer::findReferencedStrings(ProcessHandle& proc, co
     auto allRefs = dissectModule(proc, module);
     std::vector<CodeRef> strings;
     for (auto& ref : allRefs) {
-        if (ref.type != RefType::String || !ref.target) continue;
+        if (ref.type != RefType::RipRelative || !ref.target) continue;
         std::string text;
         if (readPrintableString(proc, ref.target, text)) {
+            ref.type = RefType::String;
             ref.text = std::move(text);
             strings.push_back(ref);
         }
@@ -156,6 +157,16 @@ std::vector<CodeRef> CodeAnalyzer::findReferencedFunctions(ProcessHandle& proc, 
             functions.push_back(ref);
     }
     return functions;
+}
+
+std::vector<CodeRef> CodeAnalyzer::findRipRelativeInstructions(ProcessHandle& proc, const ModuleInfo& module) {
+    auto allRefs = dissectModule(proc, module);
+    std::vector<CodeRef> ripRefs;
+    for (auto& ref : allRefs) {
+        if (ref.type == RefType::RipRelative)
+            ripRefs.push_back(ref);
+    }
+    return ripRefs;
 }
 
 std::vector<CodeCave> CodeAnalyzer::findCodeCaves(ProcessHandle& proc, const ModuleInfo& module, size_t minSize) {

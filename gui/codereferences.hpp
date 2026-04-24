@@ -31,6 +31,7 @@ private:
     QSpinBox* minCaveSizeSpin_;
     QTableWidget* stringsTable_;
     QTableWidget* functionsTable_;
+    QTableWidget* ripRelativeTable_;
     QTableWidget* cavesTable_;
 };
 

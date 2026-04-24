@@ -9,7 +9,7 @@
 
 namespace ce {
 
-enum class RefType { Call, Jump, String, Function };
+enum class RefType { Call, Jump, String, Function, RipRelative };
 
 struct CodeRef {
     uintptr_t address;      // Address of the instruction
@@ -33,6 +33,9 @@ public:
 
     /// Find direct call targets inside a module.
     std::vector<CodeRef> findReferencedFunctions(ProcessHandle& proc, const ModuleInfo& module);
+
+    /// Find RIP-relative memory references inside executable module regions.
+    std::vector<CodeRef> findRipRelativeInstructions(ProcessHandle& proc, const ModuleInfo& module);
 
     /// Find code caves (runs of 0x00 or 0xCC bytes).
     std::vector<CodeCave> findCodeCaves(ProcessHandle& proc, const ModuleInfo& module, size_t minSize = 16);
