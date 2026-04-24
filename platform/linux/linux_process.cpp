@@ -229,8 +229,12 @@ Result<void> LinuxProcessHandle::protect(uintptr_t address, size_t size, MemProt
     if (newProtection & MemProt::Read)  prot |= 1;
     if (newProtection & MemProt::Write) prot |= 2;
     if (newProtection & MemProt::Exec)  prot |= 4;
-    size_t protSize = (size + 4095) & ~4095ULL;
-    int64_t result = remoteSyscall(pid_, 10 /*__NR_mprotect*/, address, protSize, prot, 0, 0, 0);
+
+    uintptr_t pageStart = address & ~uintptr_t(4095);
+    uintptr_t pageEnd = (address + size + 4095) & ~uintptr_t(4095);
+    size_t protSize = pageEnd - pageStart;
+
+    int64_t result = remoteSyscall(pid_, 10 /*__NR_mprotect*/, pageStart, protSize, prot, 0, 0, 0);
     if (result < 0)
         return std::unexpected(std::make_error_code(std::errc::permission_denied));
     return {};

@@ -1,15 +1,61 @@
 #include "platform/linux/linux_process.hpp"
 #include "platform/linux/ptrace_wrapper.hpp"
+#include "core/ct_file.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <filesystem>
 #include <csignal>
 #include <unistd.h>
 #include <sys/wait.h>
 
 using namespace ce;
 using namespace ce::os;
+
+static void test_cheat_table_json() {
+    printf("\n── Test: CheatTable JSON Round Trip ──\n");
+
+    CheatTable table;
+    table.gameName = "Example Game";
+    table.author = "cecore";
+
+    CheatEntry entry;
+    entry.id = 7;
+    entry.description = "Health \"current\"";
+    entry.address = 0x1234;
+    entry.type = ValueType::Int32;
+    entry.value = "100\n200";
+    entry.active = true;
+    entry.autoAsmScript = "[ENABLE]\nassert(1234, 90)\n";
+    table.entries.push_back(entry);
+
+    auto path = std::filesystem::temp_directory_path() /
+        ("cecore-table-" + std::to_string(getpid()) + ".json");
+
+    if (!table.saveJson(path.string())) {
+        printf("  Save FAILED\n");
+        return;
+    }
+
+    CheatTable loaded;
+    bool ok = loaded.loadJson(path.string());
+    std::filesystem::remove(path);
+
+    bool matches = ok &&
+        loaded.gameName == table.gameName &&
+        loaded.author == table.author &&
+        loaded.entries.size() == 1 &&
+        loaded.entries[0].id == entry.id &&
+        loaded.entries[0].description == entry.description &&
+        loaded.entries[0].address == entry.address &&
+        loaded.entries[0].type == entry.type &&
+        loaded.entries[0].value == entry.value &&
+        loaded.entries[0].active == entry.active &&
+        loaded.entries[0].autoAsmScript == entry.autoAsmScript;
+
+    printf("  JSON round trip: %s\n", matches ? "OK" : "FAILED");
+}
 
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
@@ -141,6 +187,7 @@ int main(int argc, char* argv[]) {
         usleep(200000); // Wait for it to start
     }
 
+    test_cheat_table_json();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

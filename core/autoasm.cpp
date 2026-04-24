@@ -137,27 +137,22 @@ void AutoAssembler::parseLine(const std::string& rawLine,
     if (startsWith(upper, "UNREGISTERSYMBOL(")) return;
 
     // FULLACCESS(address, size) — make memory writable
-    if (startsWith(upper, "FULLACCESS(") && line.back() == ')' && proc) {
+    if (startsWith(upper, "FULLACCESS(") && line.back() == ')') {
         auto args = line.substr(11, line.size() - 12);
-        auto comma = args.find(',');
-        if (comma != std::string::npos) {
-            auto addrStr = trim(args.substr(0, comma));
-            auto sizeStr = trim(args.substr(comma + 1));
-            // Resolve later in phase 2
-        }
+        asmLines.push_back("__FULLACCESS__:" + args);
         return;
     }
 
     // ASSERT(address, bytes) — verify bytes at address before proceeding
-    if (startsWith(upper, "ASSERT(") && line.back() == ')' && proc) {
+    if (startsWith(upper, "ASSERT(") && line.back() == ')') {
         auto args = line.substr(7, line.size() - 8);
         auto comma = args.find(',');
         if (comma != std::string::npos) {
             auto addrExpr = trim(args.substr(0, comma));
             auto bytesStr = trim(args.substr(comma + 1));
-            // Will be resolved and checked in phase 2
             log.push_back("ASSERT: " + addrExpr + " = " + bytesStr);
         }
+        asmLines.push_back("__ASSERT__:" + args);
         return;
     }
 
@@ -435,9 +430,92 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             continue;
         }
 
+        // Handle special deferred directives
+        if (startsWith(trimmedLine, "__FULLACCESS__:")) {
+            auto args = trimmedLine.substr(15);
+            auto comma = args.find(',');
+            if (comma == std::string::npos) {
+                result.error = "FULLACCESS requires address and size";
+                return result;
+            }
+
+            auto addrExpr = trim(args.substr(0, comma));
+            auto sizeStr = trim(args.substr(comma + 1));
+            auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+            size_t size = 0;
+            try {
+                size = std::stoull(sizeStr, nullptr, 0);
+            } catch (...) {
+                result.error = "Invalid FULLACCESS size: " + sizeStr;
+                return result;
+            }
+
+            if (!addr || size == 0) {
+                result.error = "Invalid FULLACCESS target: " + addrExpr;
+                return result;
+            }
+
+            auto protectResult = proc.protect(addr, size, MemProt::All);
+            if (!protectResult) {
+                result.error = "FULLACCESS failed at " + addrExpr + ": " + protectResult.error().message();
+                return result;
+            }
+            result.log.push_back("FULLACCESS: " + addrExpr + " size=" + std::to_string(size));
+            continue;
+        }
+        if (startsWith(trimmedLine, "__ASSERT__:")) {
+            auto args = trimmedLine.substr(11);
+            auto comma = args.find(',');
+            if (comma == std::string::npos) {
+                result.error = "ASSERT requires address and bytes";
+                return result;
+            }
+
+            auto addrExpr = trim(args.substr(0, comma));
+            auto bytesStr = trim(args.substr(comma + 1));
+            auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+            if (!addr) {
+                result.error = "Invalid ASSERT target: " + addrExpr;
+                return result;
+            }
+
+            if (!bytesStr.empty() && bytesStr.front() == '"') bytesStr = bytesStr.substr(1);
+            if (!bytesStr.empty() && bytesStr.back() == '"') bytesStr.pop_back();
+
+            ScanConfig pattern;
+            pattern.parseAOB(bytesStr);
+            if (pattern.byteArray.empty()) {
+                result.error = "ASSERT has no bytes: " + bytesStr;
+                return result;
+            }
+
+            std::vector<uint8_t> current(pattern.byteArray.size());
+            auto readResult = proc.read(addr, current.data(), current.size());
+            if (!readResult || *readResult < current.size()) {
+                result.error = "ASSERT read failed at " + addrExpr;
+                return result;
+            }
+
+            for (size_t i = 0; i < pattern.byteArray.size(); ++i) {
+                if (i < pattern.byteArrayMask.size() && !pattern.byteArrayMask[i])
+                    continue;
+                if (current[i] != pattern.byteArray[i]) {
+                    char expected[8];
+                    char actual[8];
+                    snprintf(expected, sizeof(expected), "%02x", pattern.byteArray[i]);
+                    snprintf(actual, sizeof(actual), "%02x", current[i]);
+                    result.error = "ASSERT failed at " + addrExpr + "+" + std::to_string(i) +
+                        ": expected " + expected + ", got " + actual;
+                    return result;
+                }
+            }
+
+            result.log.push_back("ASSERT OK: " + addrExpr);
+            continue;
+        }
+
         if (currentAddr == 0) continue;
 
-        // Handle special deferred directives
         if (startsWith(trimmedLine, "__CREATETHREAD__:") || startsWith(trimmedLine, "__CREATETHREADANDWAIT__:")) {
             // Defer to after all writes — store address expression for later
             result.log.push_back("Deferred: " + trimmedLine);

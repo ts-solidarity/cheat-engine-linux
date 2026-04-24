@@ -5,6 +5,7 @@
 #include <sstream>
 #include <cstring>
 #include <cmath>
+#include <type_traits>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -95,9 +96,7 @@ void scanBufferString(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
 
     for (size_t offset = 0; offset < limit; ++offset) {
         if (std::memcmp(buf + offset, n, nLen) == 0) {
-            // Store 1 byte as placeholder value (address is what matters)
-            uint8_t dummy = 0;
-            result.addResult(baseAddr + offset, &dummy, 1);
+            result.addResult(baseAddr + offset, buf + offset, nLen);
         }
     }
 }
@@ -117,8 +116,7 @@ void scanBufferUnicode(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
 
     for (size_t offset = 0; offset < limit; offset += 2) {
         if (std::memcmp(buf + offset, n, nBytes) == 0) {
-            uint8_t dummy = 0;
-            result.addResult(baseAddr + offset, &dummy, 1);
+            result.addResult(baseAddr + offset, buf + offset, nBytes);
         }
     }
 }
@@ -141,8 +139,7 @@ void scanBufferAOB(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
             }
         }
         if (match) {
-            uint8_t dummy = 0;
-            result.addResult(baseAddr + offset, &dummy, 1);
+            result.addResult(baseAddr + offset, buf + offset, pLen);
         }
     }
 }
@@ -223,6 +220,77 @@ void scanBufferAllTypes(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
                     result.addResult(baseAddr + offset, &v, 8);
         }
     }
+}
+
+std::vector<uint8_t> utf16LeBytes(const std::string& text) {
+    std::vector<uint8_t> bytes;
+    bytes.reserve(text.size() * 2);
+    for (char c : text) {
+        bytes.push_back(static_cast<uint8_t>(c));
+        bytes.push_back(0);
+    }
+    return bytes;
+}
+
+size_t valueSizeForConfig(const ScanConfig& config) {
+    switch (config.valueType) {
+        case ValueType::String:
+            return std::max<size_t>(1, config.stringValue.size());
+        case ValueType::UnicodeString:
+            return std::max<size_t>(2, config.stringValue.size() * 2);
+        case ValueType::ByteArray:
+        case ValueType::Binary:
+            return std::max<size_t>(1, config.byteArray.size());
+        case ValueType::Byte:
+            return 1;
+        case ValueType::Int16:
+            return 2;
+        case ValueType::Int32:
+        case ValueType::Float:
+            return 4;
+        case ValueType::Int64:
+        case ValueType::Double:
+            return 8;
+        default:
+            return 4;
+    }
+}
+
+template<typename T>
+bool compareNextNumeric(const ScanConfig& config, const uint8_t* currentVal, const uint8_t* oldVal) {
+    T cur{};
+    T old{};
+    std::memcpy(&cur, currentVal, sizeof(T));
+    std::memcpy(&old, oldVal, sizeof(T));
+
+    auto cmp = getCompare<T>(config.compareType);
+    if (config.compareType >= ScanCompare::Changed)
+        return cmp(cur, old, T{});
+
+    if constexpr (std::is_floating_point_v<T>) {
+        T v1 = static_cast<T>(config.floatValue);
+        T v2 = static_cast<T>(config.floatValue2);
+        if (config.compareType == ScanCompare::Exact) {
+            if (config.roundingType == 1 || config.floatTolerance > 0.0)
+                return std::abs(cur - v1) <= static_cast<T>(config.floatTolerance);
+            if (config.roundingType == 2)
+                return static_cast<int64_t>(cur) == static_cast<int64_t>(v1);
+        }
+        return cmp(cur, v1, v2);
+    } else {
+        return cmp(cur, static_cast<T>(config.intValue), static_cast<T>(config.intValue2));
+    }
+}
+
+bool compareMaskedBytes(const uint8_t* currentVal,
+                        const std::vector<uint8_t>& pattern,
+                        const std::vector<bool>& mask) {
+    if (pattern.empty()) return false;
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        if (i < mask.size() && !mask[i]) continue;
+        if (currentVal[i] != pattern[i]) return false;
+    }
+    return true;
 }
 
 } // anonymous namespace
@@ -567,15 +635,13 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
     cancelled_.store(false);
     progress_.store(0);
 
-    size_t valueSize = valueSizeFor(config.valueType);
+    size_t valueSize = valueSizeForConfig(config);
     auto resultDir = makeScanDir();
     ScanResult result(resultDir / "results");
 
     size_t total = previous.count();
     size_t processed = 0;
 
-    // Page-aware reading: group addresses by 4KB page
-    constexpr size_t PAGE_SIZE = 4096;
     constexpr size_t BATCH = 4096;
 
     auto addrPath = previous.directory() / "addresses.bin";
@@ -591,7 +657,6 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
 
     std::vector<uintptr_t> addrs(BATCH);
     std::vector<uint8_t> oldVals(BATCH * valueSize);
-    std::vector<uint8_t> pageBuf(PAGE_SIZE);
 
     size_t remaining = total;
     while (remaining > 0 && !cancelled_.load()) {
@@ -601,8 +666,8 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
 
         for (size_t i = 0; i < n; ++i) {
             // Read current value
-            uint8_t currentVal[8] = {};
-            auto rr = proc.read(addrs[i], currentVal, valueSize);
+            std::vector<uint8_t> currentVal(valueSize);
+            auto rr = proc.read(addrs[i], currentVal.data(), valueSize);
             if (!rr || *rr < valueSize) continue;
 
             uint8_t* oldVal = oldVals.data() + i * valueSize;
@@ -610,40 +675,89 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
 
             // Compare based on type
             switch (config.valueType) {
+                case ValueType::Byte:
+                    match = compareNextNumeric<uint8_t>(config, currentVal.data(), oldVal);
+                    break;
+                case ValueType::Int16:
+                    match = compareNextNumeric<int16_t>(config, currentVal.data(), oldVal);
+                    break;
                 case ValueType::Int32: {
-                    auto cmp = getCompare<int32_t>(config.compareType);
-                    int32_t cur, old;
-                    std::memcpy(&cur, currentVal, 4);
-                    std::memcpy(&old, oldVal, 4);
-                    // For Changed/Unchanged/Increased/Decreased, compare against old value
-                    if (config.compareType >= ScanCompare::Changed)
-                        match = cmp(cur, old, 0);
-                    else
-                        match = cmp(cur, (int32_t)config.intValue, (int32_t)config.intValue2);
+                    match = compareNextNumeric<int32_t>(config, currentVal.data(), oldVal);
                     break;
                 }
+                case ValueType::Int64:
+                    match = compareNextNumeric<int64_t>(config, currentVal.data(), oldVal);
+                    break;
                 case ValueType::Float: {
-                    auto cmp = getCompare<float>(config.compareType);
-                    float cur, old;
-                    std::memcpy(&cur, currentVal, 4);
-                    std::memcpy(&old, oldVal, 4);
-                    if (config.compareType >= ScanCompare::Changed)
-                        match = cmp(cur, old, 0);
-                    else
-                        match = cmp(cur, (float)config.floatValue, (float)config.floatValue2);
+                    match = compareNextNumeric<float>(config, currentVal.data(), oldVal);
                     break;
                 }
-                // Add other types as needed...
+                case ValueType::Double:
+                    match = compareNextNumeric<double>(config, currentVal.data(), oldVal);
+                    break;
+                case ValueType::String: {
+                    if (config.compareType >= ScanCompare::Changed) {
+                        match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
+                                (config.compareType == ScanCompare::Changed ||
+                                 config.compareType == ScanCompare::Increased ||
+                                 config.compareType == ScanCompare::Decreased);
+                    } else if (config.compareType == ScanCompare::Exact) {
+                        match = config.stringValue.size() == valueSize &&
+                                std::memcmp(currentVal.data(), config.stringValue.data(), valueSize) == 0;
+                    } else if (config.compareType == ScanCompare::Unknown) {
+                        match = true;
+                    }
+                    break;
+                }
+                case ValueType::UnicodeString: {
+                    auto needle = utf16LeBytes(config.stringValue);
+                    if (config.compareType >= ScanCompare::Changed) {
+                        match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
+                                (config.compareType == ScanCompare::Changed ||
+                                 config.compareType == ScanCompare::Increased ||
+                                 config.compareType == ScanCompare::Decreased);
+                    } else if (config.compareType == ScanCompare::Exact) {
+                        match = needle.size() == valueSize &&
+                                std::memcmp(currentVal.data(), needle.data(), valueSize) == 0;
+                    } else if (config.compareType == ScanCompare::Unknown) {
+                        match = true;
+                    }
+                    break;
+                }
+                case ValueType::ByteArray:
+                    if (config.compareType >= ScanCompare::Changed) {
+                        match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
+                                (config.compareType == ScanCompare::Changed ||
+                                 config.compareType == ScanCompare::Increased ||
+                                 config.compareType == ScanCompare::Decreased);
+                    } else if (config.compareType == ScanCompare::Exact) {
+                        match = compareMaskedBytes(currentVal.data(), config.byteArray, config.byteArrayMask);
+                    } else if (config.compareType == ScanCompare::Unknown) {
+                        match = true;
+                    }
+                    break;
+                case ValueType::Binary:
+                    if (config.compareType >= ScanCompare::Changed) {
+                        match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
+                                (config.compareType == ScanCompare::Changed ||
+                                 config.compareType == ScanCompare::Increased ||
+                                 config.compareType == ScanCompare::Decreased);
+                    } else if (config.compareType == ScanCompare::Exact) {
+                        match = std::memcmp(currentVal.data(), config.byteArray.data(), valueSize) == 0;
+                    } else if (config.compareType == ScanCompare::Unknown) {
+                        match = true;
+                    }
+                    break;
                 default: {
                     // Generic byte comparison
-                    match = (std::memcmp(currentVal, oldVal, valueSize) != 0) ==
+                    match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
                             (config.compareType == ScanCompare::Changed);
                     break;
                 }
             }
 
             if (match)
-                result.addResult(addrs[i], currentVal, valueSize);
+                result.addResult(addrs[i], currentVal.data(), valueSize);
         }
 
         processed += n;
