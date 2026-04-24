@@ -1081,6 +1081,7 @@ bool AddressListModel::setData(const QModelIndex& index, const QVariant& value, 
     if (role == Qt::EditRole) {
         if (index.column() == 1) {
             entries_[index.row()].description = value.toString();
+            emit dataChanged(index, index, {Qt::DisplayRole, Qt::EditRole});
             return true;
         }
         if (index.column() == 4) {
