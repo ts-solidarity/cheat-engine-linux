@@ -515,6 +515,12 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // DS "text" — emit string bytes at the active address.
+    if (startsWith(upper, "DS ")) {
+        asmLines.push_back("__DS__:" + trim(line.substr(3)));
+        return;
+    }
+
     // Everything else is an assembly line or label definition
     asmLines.push_back(line);
 }
@@ -973,6 +979,22 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             result.disableInfo.originals.push_back({currentAddr, orig});
 
             std::vector<uint8_t> data(count, 0x90);
+            proc.write(currentAddr, data.data(), data.size());
+            currentAddr += data.size();
+            continue;
+        }
+        if (startsWith(trimmedLine, "__DS__:")) {
+            auto text = stripOptionalQuotes(trimmedLine.substr(7));
+            if (text.empty()) {
+                result.error = "DS requires a string";
+                return result;
+            }
+
+            std::vector<uint8_t> data(text.begin(), text.end());
+            std::vector<uint8_t> orig(data.size());
+            proc.read(currentAddr, orig.data(), orig.size());
+            result.disableInfo.originals.push_back({currentAddr, orig});
+
             proc.write(currentAddr, data.data(), data.size());
             currentAddr += data.size();
             continue;

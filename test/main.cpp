@@ -171,6 +171,34 @@ static void test_autoassembler_nop_fillmem(pid_t pid) {
     printf("  nop/fillmem: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_ds(pid_t pid) {
+    printf("\n── Test: AutoAssembler ds ──\n");
+
+    LinuxProcessHandle proc(pid);
+    auto allocResult = proc.allocate(4096, MemProt::All);
+    if (!allocResult) {
+        printf("  ds: FAILED\n");
+        return;
+    }
+    uintptr_t addr = *allocResult;
+
+    char script[256];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "%lx:\n"
+        "ds \"hello\"\n",
+        addr);
+
+    AutoAssembler aa;
+    auto result = aa.execute(proc, script);
+    char actual[5] = {};
+    proc.read(addr, actual, sizeof(actual));
+
+    bool ok = result.success && std::memcmp(actual, "hello", sizeof(actual)) == 0;
+    proc.free(addr, 4096);
+    printf("  ds: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_aobscanmodule(pid_t pid) {
     printf("\n── Test: AutoAssembler aobscanmodule ──\n");
 
@@ -405,6 +433,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_nop_fillmem(targetPid);
+    test_autoassembler_ds(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_aobscanregion(targetPid);
     test_autoassembler_requires_target(targetPid);
