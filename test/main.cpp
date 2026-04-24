@@ -2,6 +2,7 @@
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
+#include "debug/breakpoint_manager.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -100,6 +101,53 @@ static void test_autoassembler_requires_target(pid_t pid) {
     auto result = aa.execute(proc, "[ENABLE]\nmov eax, 1\n");
     bool ok = !result.success && result.error.find("No active assembly address") != std::string::npos;
     printf("  missing target: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_breakpoint_conditions() {
+    printf("\n── Test: Breakpoint Lua Conditions ──\n");
+
+    BreakpointManager mgr;
+
+    Breakpoint falseBp;
+    falseBp.address = 0x401000;
+    falseBp.condition = "rax == 2";
+    int falseId = mgr.add(falseBp);
+
+    Breakpoint trueBp;
+    trueBp.address = 0x401010;
+    trueBp.condition = "RAX == 1 and bpId == 2 and hitCount == 1 and bp.id == 2 and ctx.rip == rip";
+    int trueId = mgr.add(trueBp);
+
+    BreakpointHit hit{};
+    hit.bpId = falseId;
+    hit.address = falseBp.address;
+    hit.rip = 0x401000;
+    hit.tid = 77;
+    hit.context.rax = 1;
+    hit.context.rip = hit.rip;
+
+    bool falseMatched = mgr.recordHit(falseId, hit);
+
+    hit.bpId = trueId;
+    hit.address = trueBp.address;
+    hit.rip = 0x401010;
+    hit.context.rip = hit.rip;
+    bool trueMatched = mgr.recordHit(trueId, hit);
+
+    auto bps = mgr.list();
+    auto falseIt = std::find_if(bps.begin(), bps.end(), [falseId](const Breakpoint& bp) {
+        return bp.id == falseId;
+    });
+    auto trueIt = std::find_if(bps.begin(), bps.end(), [trueId](const Breakpoint& bp) {
+        return bp.id == trueId;
+    });
+
+    bool ok = !falseMatched && trueMatched &&
+        falseIt != bps.end() && falseIt->hitCount == 0 &&
+        trueIt != bps.end() && trueIt->hitCount == 1 &&
+        mgr.getHits(falseId).empty() && mgr.getHits(trueId).size() == 1;
+
+    printf("  Lua condition gate: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_process_enumeration() {
@@ -236,6 +284,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_requires_target(targetPid);
+    test_breakpoint_conditions();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

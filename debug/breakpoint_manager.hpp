@@ -8,6 +8,7 @@
 #include <functional>
 #include <mutex>
 #include <atomic>
+#include <unordered_map>
 
 namespace ce {
 
@@ -69,8 +70,8 @@ public:
     /// Remove all hardware breakpoints from a thread.
     bool removeFromThread(Debugger& dbg, pid_t tid);
 
-    /// Record a hit.
-    void recordHit(int id, const BreakpointHit& hit);
+    /// Record a hit. Returns true when the hit should be delivered to the user.
+    bool recordHit(int id, const BreakpointHit& hit);
 
     /// Get hit log for a breakpoint.
     std::vector<BreakpointHit> getHits(int id) const;
