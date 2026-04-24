@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <csignal>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -522,6 +523,45 @@ static void test_lua_process_bindings(pid_t pid) {
     printf("  openProcess/getProcessList: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_memscan() {
+    printf("\n── Test: Lua memscan bindings ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  firstScan/nextScan: FAILED\n");
+        return;
+    }
+
+    auto* target = reinterpret_cast<int32_t*>(page);
+    *target = 1111;
+    auto base = reinterpret_cast<uintptr_t>(page);
+
+    LinuxProcessHandle proc(getpid());
+    LuaEngine lua;
+    lua.setProcess(&proc);
+
+    std::string script =
+        "local base = " + std::to_string(base) + "\n"
+        "local stop = base + " + std::to_string(pageSize) + "\n"
+        "local ms = createMemScan()\n"
+        "assert(ms:firstScan(" + std::to_string((int)ScanCompare::Exact) + ", " +
+            std::to_string((int)ValueType::Int32) + ", '1111', base, stop, 4))\n"
+        "assert(ms:getFoundCount() == 1)\n"
+        "assert(ms:getAddress(0) == base)\n"
+        "writeIntegerLocal(base, 2222)\n"
+        "assert(ms:nextScan(" + std::to_string((int)ScanCompare::Exact) + ", " +
+            std::to_string((int)ValueType::Int32) + ", '2222', base, stop, 4))\n"
+        "assert(ms:getFoundCount() == 1)\n"
+        "assert(ms:getAddress(0) == base)\n";
+
+    auto err = lua.execute(script);
+    munmap(page, pageSize);
+
+    printf("  firstScan/nextScan: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -670,6 +710,7 @@ int main(int argc, char* argv[]) {
     test_lua_local_memory();
     test_lua_autoassemble_check();
     test_lua_process_bindings(targetPid);
+    test_lua_memscan();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

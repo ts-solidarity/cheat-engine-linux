@@ -573,6 +573,22 @@ struct LuaScanData {
     std::unique_ptr<ScanResult> result;
 };
 
+static ScanConfig luaScanConfig(lua_State* L, int scanTypeIndex, int valueTypeIndex, int valueIndex) {
+    int scanType = (int)luaL_checkinteger(L, scanTypeIndex);
+    int valueType = (int)luaL_checkinteger(L, valueTypeIndex);
+    const char* value = luaL_checkstring(L, valueIndex);
+
+    ScanConfig cfg;
+    cfg.valueType = (ValueType)valueType;
+    cfg.compareType = (ScanCompare)scanType;
+    cfg.intValue = atoll(value);
+    cfg.floatValue = atof(value);
+    cfg.alignment = (size_t)luaL_optinteger(L, valueIndex + 3, 4);
+    cfg.startAddress = (uintptr_t)luaL_optinteger(L, valueIndex + 1, cfg.startAddress);
+    cfg.stopAddress = (uintptr_t)luaL_optinteger(L, valueIndex + 2, cfg.stopAddress);
+    return cfg;
+}
+
 static int l_createMemScan(lua_State* L) {
     auto* sd = (LuaScanData*)lua_newuserdata(L, sizeof(LuaScanData));
     new (sd) LuaScanData();
@@ -593,20 +609,23 @@ static int l_createMemScan(lua_State* L) {
             auto* sd = (LuaScanData*)luaL_checkudata(L, 1, "MemScan");
             auto* p = getProc(L);
             if (!p) { lua_pushboolean(L, 0); return 1; }
-            int scanType = (int)luaL_checkinteger(L, 2);
-            int valueType = (int)luaL_checkinteger(L, 3);
-            const char* value = luaL_checkstring(L, 4);
-            ScanConfig cfg;
-            cfg.valueType = (ValueType)valueType;
-            cfg.compareType = (ScanCompare)scanType;
-            cfg.intValue = atoll(value);
-            cfg.floatValue = atof(value);
-            cfg.alignment = 4;
+            auto cfg = luaScanConfig(L, 2, 3, 4);
             sd->result = std::make_unique<ScanResult>(sd->scanner.firstScan(*p, cfg));
             lua_pushboolean(L, 1);
             return 1;
         });
         lua_setfield(L, -2, "firstScan");
+
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            auto* sd = (LuaScanData*)luaL_checkudata(L, 1, "MemScan");
+            auto* p = getProc(L);
+            if (!p || !sd->result) { lua_pushboolean(L, 0); return 1; }
+            auto cfg = luaScanConfig(L, 2, 3, 4);
+            sd->result = std::make_unique<ScanResult>(sd->scanner.nextScan(*p, cfg, *sd->result));
+            lua_pushboolean(L, 1);
+            return 1;
+        });
+        lua_setfield(L, -2, "nextScan");
 
         lua_pushcfunction(L, [](lua_State* L) -> int {
             auto* sd = (LuaScanData*)luaL_checkudata(L, 1, "MemScan");
