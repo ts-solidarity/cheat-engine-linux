@@ -18,6 +18,7 @@
 #include <QGroupBox>
 #include <QProgressBar>
 #include <QSlider>
+#include <functional>
 
 namespace ce::gui {
 
@@ -117,6 +118,7 @@ struct AddressEntry {
     QString frozenValue;      // Value to continuously write when active
     ce::FreezeMode freezeMode = ce::FreezeMode::Normal;
     QString autoAsmScript;    // Auto-assembler script to run on enable/disable
+    ce::DisableInfo autoAsmDisableInfo;
     int indent = 0;           // Nesting level (0 = root, 1 = child, etc.)
     bool isGroup = false;     // Group header (no address, just a label)
 };
@@ -131,6 +133,10 @@ public:
     void setFreezeMode(int row, ce::FreezeMode mode);
     const std::vector<AddressEntry>& entries() const { return entries_; }
     void setProcess(ce::ProcessHandle* proc) { proc_ = proc; }
+    void setAutoAssembler(ce::AutoAssembler* autoAsm) { autoAsm_ = autoAsm; }
+    void setActivationErrorCallback(std::function<void(const QString&, const QString&)> cb) {
+        activationErrorCb_ = std::move(cb);
+    }
     void updateValues(ce::ProcessHandle* proc);
     void freezeWrite(ce::ProcessHandle* proc);
     QJsonArray toJson() const;
@@ -144,8 +150,13 @@ public:
     bool setData(const QModelIndex& index, const QVariant& value, int role) override;
 
 private:
+    bool setEntryActive(int row, bool active);
+    void reportActivationError(const QString& title, const QString& message);
+
     std::vector<AddressEntry> entries_;
     ce::ProcessHandle* proc_ = nullptr;
+    ce::AutoAssembler* autoAsm_ = nullptr;
+    std::function<void(const QString&, const QString&)> activationErrorCb_;
 };
 
 } // namespace ce::gui

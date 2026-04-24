@@ -312,6 +312,10 @@ void MainWindow::setupUi() {
 
     // ── Bottom: address list ──
     addressListModel_ = new AddressListModel(this);
+    addressListModel_->setAutoAssembler(&autoAsm_);
+    addressListModel_->setActivationErrorCallback([this](const QString& title, const QString& message) {
+        QMessageBox::warning(this, title, message);
+    });
     addressListView_ = new QTableView;
     addressListView_->setModel(addressListModel_);
     addressListView_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -884,6 +888,51 @@ void AddressListModel::setFreezeMode(int row, FreezeMode mode) {
     emit dataChanged(index(row, 0), index(row, columnCount() - 1));
 }
 
+void AddressListModel::reportActivationError(const QString& title, const QString& message) {
+    if (activationErrorCb_)
+        activationErrorCb_(title, message);
+}
+
+bool AddressListModel::setEntryActive(int row, bool active) {
+    if (row < 0 || row >= (int)entries_.size()) return false;
+
+    auto& e = entries_[row];
+    if (e.active == active) return true;
+
+    if (!e.autoAsmScript.isEmpty()) {
+        if (!proc_ || !autoAsm_) {
+            reportActivationError("Process required",
+                "Open a process before activating this auto-assembler record.");
+            return false;
+        }
+
+        if (active) {
+            auto result = autoAsm_->execute(*proc_, e.autoAsmScript.toStdString());
+            if (!result.success) {
+                reportActivationError("Auto-assembler activation failed",
+                    QString::fromStdString(result.error));
+                return false;
+            }
+            e.autoAsmDisableInfo = std::move(result.disableInfo);
+        } else {
+            auto result = autoAsm_->disable(*proc_, e.autoAsmScript.toStdString(), e.autoAsmDisableInfo);
+            if (!result.success) {
+                reportActivationError("Auto-assembler deactivation failed",
+                    QString::fromStdString(result.error));
+                return false;
+            }
+            e.autoAsmDisableInfo = {};
+        }
+    }
+
+    e.active = active;
+    if (e.active)
+        e.frozenValue = e.currentValue;
+    else
+        e.frozenValue.clear();
+    return true;
+}
+
 void AddressListModel::removeEntry(int row) {
     if (row < 0 || row >= (int)entries_.size()) return;
     beginRemoveRows({}, row, row);
@@ -977,11 +1026,9 @@ Qt::ItemFlags AddressListModel::flags(const QModelIndex& index) const {
 bool AddressListModel::setData(const QModelIndex& index, const QVariant& value, int role) {
     if (role == Qt::CheckStateRole && index.column() == 0) {
         auto& e = entries_[index.row()];
-        e.active = (value.toInt() == Qt::Checked);
-        if (e.active)
-            e.frozenValue = e.currentValue;
-        else
-            e.frozenValue.clear();
+        bool requestedActive = (value.toInt() == Qt::Checked);
+        if (!setEntryActive(index.row(), requestedActive))
+            return false;
         emit dataChanged(index, index);
 
         // Cascade to children if this is a group
@@ -989,9 +1036,7 @@ bool AddressListModel::setData(const QModelIndex& index, const QVariant& value, 
             int parentIndent = e.indent;
             for (int i = index.row() + 1; i < (int)entries_.size(); ++i) {
                 if (entries_[i].indent <= parentIndent) break;
-                entries_[i].active = e.active;
-                if (e.active) entries_[i].frozenValue = entries_[i].currentValue;
-                else entries_[i].frozenValue.clear();
+                setEntryActive(i, requestedActive);
             }
             emit dataChanged(this->index(index.row() + 1, 0),
                 this->index(std::min((int)entries_.size() - 1, index.row() + 50), columnCount() - 1));
