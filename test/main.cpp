@@ -377,6 +377,38 @@ static void test_one_shot_breakpoints() {
     printf("  auto-remove after hit: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_thread_filtered_breakpoints() {
+    printf("\n── Test: Thread-filtered breakpoints ──\n");
+
+    BreakpointManager mgr;
+    Breakpoint bp;
+    bp.address = 0x6000;
+    bp.threadFilter = 1234;
+    int id = mgr.add(bp);
+
+    BreakpointHit miss{};
+    miss.bpId = id;
+    miss.address = bp.address;
+    miss.rip = bp.address;
+    miss.tid = 4321;
+    miss.context.rip = miss.rip;
+
+    BreakpointHit match = miss;
+    match.tid = bp.threadFilter;
+
+    bool missed = mgr.recordHit(id, miss);
+    bool matched = mgr.recordHit(id, match);
+
+    auto bps = mgr.list();
+    auto it = std::find_if(bps.begin(), bps.end(), [id](const Breakpoint& listed) {
+        return listed.id == id;
+    });
+
+    bool ok = !missed && matched && it != bps.end() && it->hitCount == 1 &&
+        mgr.getHits(id).size() == 1 && mgr.getHits(id).front().tid == bp.threadFilter;
+    printf("  TID filter: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_lua_file_aliases() {
     printf("\n── Test: Lua file aliases ──\n");
 
@@ -612,6 +644,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
     test_one_shot_breakpoints();
+    test_thread_filtered_breakpoints();
     test_lua_file_aliases();
     test_lua_local_memory();
     test_lua_autoassemble_check();

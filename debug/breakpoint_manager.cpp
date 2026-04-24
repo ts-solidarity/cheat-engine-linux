@@ -247,6 +247,8 @@ bool BreakpointManager::recordHit(int id, const BreakpointHit& hit) {
     }
     if (!bpSnapshot.enabled)
         return false;
+    if (bpSnapshot.threadFilter != 0 && bpSnapshot.threadFilter != hit.tid)
+        return false;
 
     std::string conditionError;
     if (!conditionMatches(bpSnapshot, hit, conditionError))
