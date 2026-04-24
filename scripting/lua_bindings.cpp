@@ -6,6 +6,7 @@
 #include "arch/disassembler.hpp"
 #include "arch/assembler.hpp"
 #include "symbols/elf_symbols.hpp"
+#include "platform/linux/linux_process.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -14,9 +15,14 @@ extern "C" {
 }
 
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <unistd.h>
 #include <filesystem>
+#include <limits>
+#include <string_view>
+#include <system_error>
+#include <utility>
 
 namespace ce {
 
@@ -166,28 +172,77 @@ static int l_writeBytes(lua_State* L) {
 
 // ── Process info ──
 
+static pid_t parseProcessId(std::string_view text) {
+    std::string value(text);
+    char* end = nullptr;
+    long pid = std::strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0' || pid <= 0 ||
+        pid > std::numeric_limits<pid_t>::max()) {
+        return 0;
+    }
+    return static_cast<pid_t>(pid);
+}
+
+static std::string readProcessName(const std::filesystem::path& procDir) {
+    std::ifstream comm(procDir / "comm");
+    std::string name;
+    if (comm)
+        std::getline(comm, name);
+    return name;
+}
+
+static bool processNameMatches(const std::filesystem::path& procDir, std::string_view target) {
+    if (readProcessName(procDir) == target)
+        return true;
+
+    std::error_code ec;
+    auto exe = std::filesystem::read_symlink(procDir / "exe", ec);
+    return !ec && exe.filename().string() == target;
+}
+
+static pid_t findProcessIdByName(std::string_view target) {
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(
+             "/proc", std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (ec)
+            break;
+        auto pid = parseProcessId(entry.path().filename().string());
+        if (pid > 0 && processNameMatches(entry.path(), target))
+            return pid;
+    }
+    return 0;
+}
+
 static int l_getProcessList(lua_State* L) {
-    auto* p = getProc(L);
     // Return a table of {pid, name} pairs
     lua_newtable(L);
-    if (p) {
-        // Can't enumerate from ProcessHandle alone, but we can list /proc
-        for (auto& entry : std::filesystem::directory_iterator("/proc")) {
-            auto name = entry.path().filename().string();
-            try {
-                int pid = std::stoi(name);
-                lua_newtable(L);
-                lua_pushinteger(L, pid);
-                lua_setfield(L, -2, "pid");
-                std::ifstream comm("/proc/" + name + "/comm");
-                std::string pname;
-                if (comm) std::getline(comm, pname);
-                lua_pushstring(L, pname.c_str());
-                lua_setfield(L, -2, "name");
-                lua_rawseti(L, -2, pid);
-            } catch (...) {}
-        }
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(
+             "/proc", std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (ec)
+            break;
+        auto pid = parseProcessId(entry.path().filename().string());
+        if (pid <= 0)
+            continue;
+
+        auto pname = readProcessName(entry.path());
+        lua_newtable(L);
+        lua_pushinteger(L, pid);
+        lua_setfield(L, -2, "pid");
+        lua_pushstring(L, pname.c_str());
+        lua_setfield(L, -2, "name");
+        lua_rawseti(L, -2, pid);
     }
+    return 1;
+}
+
+static int l_getProcessIDFromProcessName(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    auto pid = findProcessIdByName(name);
+    if (pid > 0)
+        lua_pushinteger(L, pid);
+    else
+        lua_pushnil(L);
     return 1;
 }
 
@@ -460,23 +515,23 @@ static int l_addressList_getCount(lua_State* L) {
 
 static int l_openProcess(lua_State* L) {
     const char* nameOrPid = luaL_checkstring(L, 1);
-    // Try as PID first
-    int pid = atoi(nameOrPid);
+    auto pid = parseProcessId(nameOrPid);
+    if (pid <= 0)
+        pid = findProcessIdByName(nameOrPid);
+
     if (pid > 0) {
-        lua_pushinteger(L, pid);
-        return 1;
+        auto* engine = LuaEngine::instanceFromState(L);
+        if (engine) {
+            os::LinuxProcessEnumerator enumerator;
+            auto proc = enumerator.open(pid);
+            if (proc) {
+                engine->setOwnedProcess(std::move(proc));
+                lua_pushinteger(L, pid);
+                return 1;
+            }
+        }
     }
-    // Search by name
-    for (auto& entry : std::filesystem::directory_iterator("/proc")) {
-        auto name = entry.path().filename().string();
-        try {
-            int p = std::stoi(name);
-            std::ifstream comm("/proc/" + name + "/comm");
-            std::string pname;
-            if (comm) std::getline(comm, pname);
-            if (pname == nameOrPid) { lua_pushinteger(L, p); return 1; }
-        } catch (...) {}
-    }
+
     lua_pushnil(L);
     return 1;
 }
@@ -722,6 +777,7 @@ void registerExtendedBindings(lua_State* L) {
 
     // Process info
     lua_register(L, "getProcessList", l_getProcessList);
+    lua_register(L, "getProcessIDFromProcessName", l_getProcessIDFromProcessName);
     lua_register(L, "getModuleList", l_getModuleList);
 
     // Symbols

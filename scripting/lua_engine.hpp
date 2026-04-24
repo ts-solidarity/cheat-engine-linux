@@ -6,6 +6,7 @@
 #include "symbols/elf_symbols.hpp"
 #include <string>
 #include <functional>
+#include <memory>
 
 struct lua_State;
 
@@ -19,7 +20,8 @@ public:
     LuaEngine(const LuaEngine&) = delete;
 
     /// Set the target process (enables memory functions in Lua).
-    void setProcess(ProcessHandle* proc) { proc_ = proc; }
+    void setProcess(ProcessHandle* proc) { ownedProc_.reset(); proc_ = proc; }
+    void setOwnedProcess(std::unique_ptr<ProcessHandle> proc);
     void setResolver(SymbolResolver* resolver) { resolver_ = resolver; }
 
     /// Execute a Lua string. Returns error message or empty on success.
@@ -41,6 +43,7 @@ private:
     void registerBindings();
 
     lua_State* L_ = nullptr;
+    std::unique_ptr<ProcessHandle> ownedProc_;
     ProcessHandle* proc_ = nullptr;
     SymbolResolver* resolver_ = nullptr;
 };

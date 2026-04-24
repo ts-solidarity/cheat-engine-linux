@@ -388,6 +388,27 @@ assert(ok == true and msg == nil)
     printf("  autoAssembleCheck: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_process_bindings(pid_t pid) {
+    printf("\n── Test: Lua process bindings ──\n");
+
+    LuaEngine lua;
+    std::string pidText = std::to_string(pid);
+    std::string script =
+        "local pid = " + pidText + "\n"
+        "local list = getProcessList()\n"
+        "assert(type(list) == 'table')\n"
+        "assert(type(list[pid]) == 'table')\n"
+        "assert(list[pid].pid == pid)\n"
+        "assert(type(getProcessIDFromProcessName('sleep')) == 'number')\n"
+        "assert(openProcess(tostring(pid)) == pid)\n"
+        "assert(getOpenedProcessID() == pid)\n"
+        "assert(getProcessID() == pid)\n";
+
+    auto err = lua.execute(script);
+
+    printf("  openProcess/getProcessList: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -532,6 +553,7 @@ int main(int argc, char* argv[]) {
     test_breakpoint_conditions();
     test_lua_file_aliases();
     test_lua_autoassemble_check();
+    test_lua_process_bindings(targetPid);
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

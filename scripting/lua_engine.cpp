@@ -7,6 +7,7 @@ extern "C" {
 }
 
 #include <cstring>
+#include <utility>
 
 namespace ce {
 
@@ -18,6 +19,16 @@ LuaEngine* LuaEngine::instanceFromState(lua_State* L) {
     auto* eng = (LuaEngine*)lua_touserdata(L, -1);
     lua_pop(L, 1);
     return eng;
+}
+
+void LuaEngine::setOwnedProcess(std::unique_ptr<ProcessHandle> proc) {
+    ownedProc_ = std::move(proc);
+    proc_ = ownedProc_.get();
+
+    if (L_) {
+        lua_pushlightuserdata(L_, proc_);
+        lua_setfield(L_, LUA_REGISTRYINDEX, "ce_proc");
+    }
 }
 
 // ── Lua bindings ──
