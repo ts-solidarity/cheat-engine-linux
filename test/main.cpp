@@ -107,6 +107,32 @@ static void test_autoassembler_aobscanmodule(pid_t pid) {
     printf("  aobscanmodule: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_aobscanregion(pid_t pid) {
+    printf("\n── Test: AutoAssembler aobscanregion ──\n");
+
+    LinuxProcessHandle proc(pid);
+    auto modules = proc.modules();
+    auto sleepModule = std::find_if(modules.begin(), modules.end(), [](const ModuleInfo& module) {
+        return module.name == "sleep";
+    });
+    if (sleepModule == modules.end()) {
+        printf("  aobscanregion: FAILED\n");
+        return;
+    }
+
+    char script[256];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "aobscanregion(sleep_elf_region, %lx, %lx, 7F 45 4C 46)\n"
+        "registersymbol(sleep_elf_region)\n",
+        sleepModule->base, sleepModule->base + sleepModule->size);
+
+    AutoAssembler aa;
+    auto result = aa.execute(proc, script);
+    bool ok = result.success && aa.resolveSymbol("sleep_elf_region") != 0;
+    printf("  aobscanregion: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_requires_target(pid_t pid) {
     printf("\n── Test: AutoAssembler requires target ──\n");
 
@@ -299,6 +325,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
+    test_autoassembler_aobscanregion(targetPid);
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
     test_process_enumeration();

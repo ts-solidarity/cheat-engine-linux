@@ -72,6 +72,52 @@ static bool moduleMatches(const ModuleInfo& module, const std::string& requested
     return toUpper(module.name) == reqUpper || toUpper(module.path) == reqUpper;
 }
 
+static size_t findAobInRange(ProcessHandle& proc, uintptr_t start, uintptr_t stop,
+                             const std::vector<uint8_t>& pattern,
+                             const std::vector<bool>& mask,
+                             uintptr_t& firstMatch) {
+    if (pattern.empty() || stop <= start)
+        return 0;
+
+    size_t matches = 0;
+    auto regions = proc.queryRegions();
+    for (const auto& region : regions) {
+        if (region.state != MemState::Committed || !(region.protection & MemProt::Read))
+            continue;
+
+        uintptr_t regionStart = std::max(region.base, start);
+        uintptr_t regionEnd = std::min(region.base + region.size, stop);
+        if (regionEnd <= regionStart || regionEnd - regionStart < pattern.size())
+            continue;
+
+        std::vector<uint8_t> buffer(regionEnd - regionStart);
+        auto readResult = proc.read(regionStart, buffer.data(), buffer.size());
+        if (!readResult || *readResult < pattern.size())
+            continue;
+
+        size_t bytesRead = *readResult;
+        size_t limit = bytesRead - pattern.size() + 1;
+        for (size_t offset = 0; offset < limit; ++offset) {
+            bool matched = true;
+            for (size_t i = 0; i < pattern.size(); ++i) {
+                if (i < mask.size() && !mask[i])
+                    continue;
+                if (buffer[offset + i] != pattern[i]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                if (matches == 0)
+                    firstMatch = regionStart + offset;
+                ++matches;
+            }
+        }
+    }
+
+    return matches;
+}
+
 // Parse "name, size [, preferred]" from inside ALLOC(...)
 static bool parseAllocArgs(const std::string& args, std::string& name, size_t& size, uintptr_t& preferred) {
     std::istringstream ss(args);
@@ -209,6 +255,40 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // AOBSCANREGION(name, start, stop, pattern) — find pattern in an address range
+    if (startsWith(upper, "AOBSCANREGION(") && line.back() == ')' && proc) {
+        auto args = line.substr(14, line.size() - 15);
+        auto parts = splitArgs(args, 4);
+        if (parts.size() == 4) {
+            auto name = trim(parts[0]);
+            auto startExpr = trim(parts[1]);
+            auto stopExpr = trim(parts[2]);
+            auto pattern = stripOptionalQuotes(parts[3]);
+            auto start = resolveAddress(startExpr, allocs, labels, defines);
+            auto stop = resolveAddress(stopExpr, allocs, labels, defines);
+            if (!start || !stop || stop <= start) {
+                log.push_back("AOBSCANREGION: " + name + " invalid range");
+                return;
+            }
+
+            ScanConfig cfg;
+            cfg.parseAOB(pattern);
+            uintptr_t addr = 0;
+            size_t matches = findAobInRange(*proc, start, stop, cfg.byteArray, cfg.byteArrayMask, addr);
+            if (matches > 0) {
+                Define d;
+                d.name = name;
+                d.value = formatHex(addr);
+                defines.push_back(d);
+                log.push_back("AOBSCANREGION: " + name + " = 0x" + d.value +
+                    " (" + std::to_string(matches) + " matches)");
+            } else {
+                log.push_back("AOBSCANREGION: " + name + " NOT FOUND");
+            }
+        }
+        return;
+    }
+
     // AOBSCANMODULE(name, module, pattern) — find pattern inside one module
     if (startsWith(upper, "AOBSCANMODULE(") && line.back() == ')' && proc) {
         auto args = line.substr(14, line.size() - 15);
@@ -228,22 +308,17 @@ void AutoAssembler::parseLine(const std::string& rawLine,
             }
 
             ScanConfig cfg;
-            cfg.valueType = ValueType::ByteArray;
             cfg.parseAOB(pattern);
-            cfg.alignment = 1;
-            cfg.startAddress = moduleIt->base;
-            cfg.stopAddress = moduleIt->base + moduleIt->size;
-
-            MemoryScanner scanner;
-            auto result = scanner.firstScan(*proc, cfg);
-            if (result.count() > 0) {
-                uintptr_t addr = result.address(0);
+            uintptr_t addr = 0;
+            size_t matches = findAobInRange(*proc, moduleIt->base, moduleIt->base + moduleIt->size,
+                cfg.byteArray, cfg.byteArrayMask, addr);
+            if (matches > 0) {
                 Define d;
                 d.name = name;
                 d.value = formatHex(addr);
                 defines.push_back(d);
                 log.push_back("AOBSCANMODULE: " + name + " = 0x" + d.value +
-                    " in " + moduleIt->name + " (" + std::to_string(result.count()) + " matches)");
+                    " in " + moduleIt->name + " (" + std::to_string(matches) + " matches)");
             } else {
                 log.push_back("AOBSCANMODULE: " + name + " NOT FOUND in " + moduleIt->name);
             }
