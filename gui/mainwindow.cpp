@@ -257,7 +257,7 @@ void MainWindow::setupUi() {
 
     // Value type
     valueTypeCombo_ = new QComboBox;
-    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Array of Bytes", "Binary"});
+    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary"});
     valueTypeCombo_->setCurrentIndex(2); // 4 Bytes default
     rightLayout->addWidget(valueTypeCombo_);
 
@@ -441,8 +441,9 @@ static ValueType mapValueType(int index) {
         case 4: return ValueType::Float;
         case 5: return ValueType::Double;
         case 6: return ValueType::String;
-        case 7: return ValueType::ByteArray;
-        case 8: return ValueType::Binary;
+        case 7: return ValueType::UnicodeString;
+        case 8: return ValueType::ByteArray;
+        case 9: return ValueType::Binary;
         default: return ValueType::Int32;
     }
 }
@@ -461,7 +462,7 @@ void MainWindow::onFirstScan() {
     config.scanExecutableOnly = executableCheck_->isChecked();
 
     auto text = scanValueEdit_->text();
-    if (config.valueType == ValueType::String) {
+    if (config.valueType == ValueType::String || config.valueType == ValueType::UnicodeString) {
         config.stringValue = text.toStdString();
         config.alignment = 1;
     } else if (config.valueType == ValueType::ByteArray) {
@@ -497,7 +498,7 @@ void MainWindow::onNextScan() {
     config.alignment = alignEdit_->text().toInt();
 
     auto text = scanValueEdit_->text();
-    if (config.valueType == ValueType::String) {
+    if (config.valueType == ValueType::String || config.valueType == ValueType::UnicodeString) {
         config.stringValue = text.toStdString();
         config.alignment = 1;
     } else if (config.valueType == ValueType::ByteArray) {

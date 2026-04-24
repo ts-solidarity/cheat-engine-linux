@@ -599,6 +599,43 @@ static void test_binary_scan_bitmask() {
     printf("  bit wildcard match: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_unicode_string_scan() {
+    printf("\n── Test: Unicode string scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  UTF-16LE match: FAILED\n");
+        return;
+    }
+
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+    bytes[24] = 'H';
+    bytes[25] = 0;
+    bytes[26] = 'i';
+    bytes[27] = 0;
+    bytes[80] = 'H';
+    bytes[81] = 'i';
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+    ScanConfig config;
+    config.valueType = ValueType::UnicodeString;
+    config.compareType = ScanCompare::Exact;
+    config.stringValue = "Hi";
+    config.alignment = 1;
+    config.startAddress = reinterpret_cast<uintptr_t>(page);
+    config.stopAddress = config.startAddress + pageSize;
+
+    auto result = scanner.firstScan(proc, config);
+    bool ok = result.count() == 1 && result.address(0) == config.startAddress + 24;
+
+    munmap(page, pageSize);
+
+    printf("  UTF-16LE match: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -749,6 +786,7 @@ int main(int argc, char* argv[]) {
     test_lua_process_bindings(targetPid);
     test_lua_memscan();
     test_binary_scan_bitmask();
+    test_unicode_string_scan();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);
