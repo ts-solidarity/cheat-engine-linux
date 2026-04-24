@@ -562,6 +562,43 @@ static void test_lua_memscan() {
     printf("  firstScan/nextScan: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_binary_scan_bitmask() {
+    printf("\n── Test: Binary scan bitmask ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  bit wildcard match: FAILED\n");
+        return;
+    }
+
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+    bytes[16] = 0xAC;
+    bytes[17] = 0x5A;
+    bytes[32] = 0xBC;
+    bytes[33] = 0x5A;
+    bytes[48] = 0xAC;
+    bytes[49] = 0x5B;
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+    ScanConfig config;
+    config.valueType = ValueType::Binary;
+    config.compareType = ScanCompare::Exact;
+    config.parseBinary("1010???? 01011010");
+    config.alignment = 1;
+    config.startAddress = reinterpret_cast<uintptr_t>(page);
+    config.stopAddress = config.startAddress + pageSize;
+
+    auto result = scanner.firstScan(proc, config);
+    bool ok = result.count() == 1 && result.address(0) == config.startAddress + 16;
+
+    munmap(page, pageSize);
+
+    printf("  bit wildcard match: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -711,6 +748,7 @@ int main(int argc, char* argv[]) {
     test_lua_autoassemble_check();
     test_lua_process_bindings(targetPid);
     test_lua_memscan();
+    test_binary_scan_bitmask();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

@@ -127,7 +127,7 @@ void scanBufferAOB(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
                    const std::vector<uint8_t>& pattern, const std::vector<bool>& mask,
                    ScanResult& result)
 {
-    if (pattern.empty() || bufSize < pattern.size()) return;
+    if (pattern.empty() || mask.size() != pattern.size() || bufSize < pattern.size()) return;
     size_t pLen = pattern.size();
     size_t limit = bufSize - pLen + 1;
 
@@ -327,9 +327,9 @@ void ScanConfig::parseBinary(const std::string& pattern) {
     // Parse binary string like "0110??01" into bytes + mask
     // Every 8 bits = 1 byte. ? = wildcard bit.
     byteArray.clear();
-    byteArrayMask.clear(); // Reuse mask but as byte-level mask
+    byteArrayMask.clear();
+    byteMask.clear();
 
-    std::vector<uint8_t> binaryMask;
     uint8_t currentByte = 0, currentMask = 0;
     int bitCount = 0;
 
@@ -344,7 +344,7 @@ void ScanConfig::parseBinary(const std::string& pattern) {
             bitCount++;
             if (bitCount == 8) {
                 byteArray.push_back(currentByte);
-                binaryMask.push_back(currentMask);
+                byteMask.push_back(currentMask);
                 currentByte = 0;
                 currentMask = 0;
                 bitCount = 0;
@@ -356,17 +356,12 @@ void ScanConfig::parseBinary(const std::string& pattern) {
         currentByte <<= (8 - bitCount);
         currentMask <<= (8 - bitCount);
         byteArray.push_back(currentByte);
-        binaryMask.push_back(currentMask);
+        byteMask.push_back(currentMask);
     }
-    // Store mask in byteArray format (reusing byteArrayMask would be bool, but binary needs byte mask)
-    // We'll use byteArray for pattern and store mask separately via a trick:
-    // Append mask bytes after pattern bytes, split in the scan function
     binaryString = pattern; // Keep original for reference
-    // Actually, let's just use the separate vectors directly in scanBufferBinary
-    // Store mask in a way the scanner can access it
-    byteArrayMask.resize(binaryMask.size());
-    for (size_t i = 0; i < binaryMask.size(); ++i)
-        byteArrayMask[i] = (binaryMask[i] == 0xFF); // simplified — full byte mask
+    byteArrayMask.resize(byteMask.size());
+    for (size_t i = 0; i < byteMask.size(); ++i)
+        byteArrayMask[i] = byteMask[i] != 0;
 }
 
 // ── ScanResult ──
@@ -541,9 +536,7 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
             case ValueType::ByteArray:
                 scanBufferAOB(buf, bytesRead, base, config.byteArray, config.byteArrayMask, res); break;
             case ValueType::Binary: {
-                // Binary scan uses byteArray as pattern and byteArrayMask as byte-level masks
-                std::vector<uint8_t> mask(config.byteArray.size(), 0xFF);
-                scanBufferBinary(buf, bytesRead, base, config.byteArray, mask, config.alignment, res);
+                scanBufferBinary(buf, bytesRead, base, config.byteArray, config.byteMask, config.alignment, res);
                 break;
             }
             case ValueType::All:
@@ -760,7 +753,13 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                                  config.compareType == ScanCompare::Increased ||
                                  config.compareType == ScanCompare::Decreased);
                     } else if (config.compareType == ScanCompare::Exact) {
-                        match = std::memcmp(currentVal.data(), config.byteArray.data(), valueSize) == 0;
+                        match = config.byteMask.size() == config.byteArray.size();
+                        for (size_t j = 0; match && j < valueSize; ++j) {
+                            if ((currentVal[j] & config.byteMask[j]) !=
+                                (config.byteArray[j] & config.byteMask[j])) {
+                                match = false;
+                            }
+                        }
                     } else if (config.compareType == ScanCompare::Unknown) {
                         match = true;
                     }

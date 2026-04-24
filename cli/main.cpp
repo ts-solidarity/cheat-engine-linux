@@ -40,7 +40,7 @@ static void usage() {
         "  regions <pid>                 List memory regions\n"
         "\n"
         "Scan options:\n"
-        "  --type <type>     byte, i16, i32, i64, float, double (default: i32)\n"
+        "  --type <type>     byte, i16, i32, i64, float, double, string, aob, binary (default: i32)\n"
         "  --value <val>     Value to search for\n"
         "  --value2 <val>    Second value (for 'between')\n"
         "  --compare <cmp>   exact, greater, less, between, changed,\n"
@@ -63,6 +63,7 @@ static ValueType parseType(const char* s) {
     if (!strcmp(s, "double")) return ValueType::Double;
     if (!strcmp(s, "string")) return ValueType::String;
     if (!strcmp(s, "aob"))    return ValueType::ByteArray;
+    if (!strcmp(s, "binary")) return ValueType::Binary;
     fprintf(stderr, "Unknown type: %s\n", s);
     exit(1);
 }
@@ -250,6 +251,9 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
             config.alignment = 1;
         } else if (config.valueType == ValueType::ByteArray) {
             config.parseAOB(valueStr);
+            config.alignment = 1;
+        } else if (config.valueType == ValueType::Binary) {
+            config.parseBinary(valueStr);
             config.alignment = 1;
         } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
             config.floatValue = atof(valueStr);

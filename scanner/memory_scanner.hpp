@@ -35,6 +35,7 @@ struct ScanConfig {
     std::string stringValue;
     std::vector<uint8_t> byteArray;
     std::vector<bool> byteArrayMask; // true = must match, false = wildcard (??)
+    std::vector<uint8_t> byteMask;   // Bit mask for binary scans: 1 bits must match
     std::string binaryString;        // Binary pattern: "0110??01" (? = wildcard bit)
 
     /// Parse an AOB pattern like "7F 45 ?? 46" into byteArray + byteArrayMask
