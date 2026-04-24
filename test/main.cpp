@@ -351,6 +351,32 @@ static void test_breakpoint_conditions() {
     printf("  Lua condition gate: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_one_shot_breakpoints() {
+    printf("\n── Test: One-shot breakpoints ──\n");
+
+    BreakpointManager mgr;
+    Breakpoint bp;
+    bp.address = 0x5000;
+    bp.oneShot = true;
+    int id = mgr.add(bp);
+
+    BreakpointHit hit{};
+    hit.bpId = id;
+    hit.address = bp.address;
+    hit.rip = bp.address;
+    hit.context.rip = hit.rip;
+
+    bool firstMatched = mgr.recordHit(id, hit);
+    bool secondMatched = mgr.recordHit(id, hit);
+    auto bps = mgr.list();
+    bool stillListed = std::any_of(bps.begin(), bps.end(), [id](const Breakpoint& listed) {
+        return listed.id == id;
+    });
+
+    bool ok = firstMatched && !secondMatched && !stillListed && mgr.getHits(id).size() == 1;
+    printf("  auto-remove after hit: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_lua_file_aliases() {
     printf("\n── Test: Lua file aliases ──\n");
 
@@ -585,6 +611,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_aobscanall(targetPid);
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
+    test_one_shot_breakpoints();
     test_lua_file_aliases();
     test_lua_local_memory();
     test_lua_autoassemble_check();

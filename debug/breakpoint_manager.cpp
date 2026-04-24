@@ -263,26 +263,27 @@ bool BreakpointManager::recordHit(int id, const BreakpointHit& hit) {
     {
         std::lock_guard lock(mutex_);
 
-        bool found = false;
-        for (auto& bp : breakpoints_) {
-            if (bp.id == id) {
-                found = true;
-                bp.hitCount++;
-                if (bp.oneShot) bp.enabled = false;
-                callbackBp = bp;
-                notify = static_cast<bool>(hitCallback_);
-                if (notify) callback = hitCallback_;
-                break;
-            }
-        }
-        if (!found)
+        auto bpIt = std::find_if(breakpoints_.begin(), breakpoints_.end(),
+            [id](const Breakpoint& bp) { return bp.id == id; });
+        if (bpIt == breakpoints_.end())
             return false;
+
+        bpIt->hitCount++;
+        callbackBp = *bpIt;
+        if (bpIt->oneShot)
+            callbackBp.enabled = false;
+        notify = static_cast<bool>(hitCallback_);
+        if (notify)
+            callback = hitCallback_;
 
         hitLog_[id].push_back(hit);
 
         // Cap log at 10000 entries per breakpoint
         if (hitLog_[id].size() > 10000)
             hitLog_[id].erase(hitLog_[id].begin(), hitLog_[id].begin() + 5000);
+
+        if (bpIt->oneShot)
+            breakpoints_.erase(bpIt);
     }
 
     if (notify)
