@@ -726,6 +726,8 @@ void registerExtendedBindings(lua_State* L) {
     lua_register(L, "getCheatEngineDir", l_getCheatEngineDir);
 
     // File I/O
+    lua_register(L, "readFile", l_readFromFile);
+    lua_register(L, "writeFile", l_writeToFile);
     lua_register(L, "readFromFile", l_readFromFile);
     lua_register(L, "writeToFile", l_writeToFile);
     lua_register(L, "fileExists", l_fileExists);

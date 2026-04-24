@@ -3,6 +3,7 @@
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
 #include "debug/breakpoint_manager.hpp"
+#include "scripting/lua_engine.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -350,6 +351,25 @@ static void test_breakpoint_conditions() {
     printf("  Lua condition gate: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_lua_file_aliases() {
+    printf("\n── Test: Lua file aliases ──\n");
+
+    auto path = std::filesystem::temp_directory_path() /
+        ("cecore-lua-file-" + std::to_string(getpid()) + ".txt");
+
+    LuaEngine lua;
+    std::string script =
+        "assert(writeFile([[" + path.string() + "]], 'hello'))\n"
+        "assert(readFile([[" + path.string() + "]]) == 'hello')\n"
+        "assert(getTempDir() ~= nil)\n"
+        "assert(getCheatEngineDir() ~= nil)\n";
+
+    auto err = lua.execute(script);
+    std::filesystem::remove(path);
+
+    printf("  readFile/writeFile: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -492,6 +512,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_aobscanall(targetPid);
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
+    test_lua_file_aliases();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);
