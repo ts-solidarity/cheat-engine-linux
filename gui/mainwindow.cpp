@@ -8,6 +8,7 @@
 #include "gui/breakpointlist.hpp"
 #include "gui/codefinder.hpp"
 #include "gui/memoryregions.hpp"
+#include "gui/modulelist.hpp"
 #include "gui/threadlist.hpp"
 #include "gui/settingsdialog.hpp"
 #include "core/ct_file.hpp"
@@ -89,6 +90,18 @@ void MainWindow::setupMenus() {
         auto* w = new MemoryRegionsWindow(process_.get(), this);
         w->setAttribute(Qt::WA_DeleteOnClose);
         connect(w, &MemoryRegionsWindow::navigateTo, this, [this](uintptr_t addr) {
+            auto* browser = new MemoryBrowser(process_.get(), this);
+            browser->setAttribute(Qt::WA_DeleteOnClose);
+            browser->gotoAddress(addr);
+            browser->show();
+        });
+        w->show();
+    });
+    view->addAction("Module List", this, [this]() {
+        if (!process_) return;
+        auto* w = new ModuleListWindow(process_.get(), this);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        connect(w, &ModuleListWindow::navigateTo, this, [this](uintptr_t addr) {
             auto* browser = new MemoryBrowser(process_.get(), this);
             browser->setAttribute(Qt::WA_DeleteOnClose);
             browser->gotoAddress(addr);
