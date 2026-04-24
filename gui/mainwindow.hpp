@@ -119,6 +119,8 @@ struct AddressEntry {
     ce::FreezeMode freezeMode = ce::FreezeMode::Normal;
     QString autoAsmScript;    // Auto-assembler script to run on enable/disable
     ce::DisableInfo autoAsmDisableInfo;
+    QString color;            // Hex color for display
+    QString dropdownList;     // "value:label;value:label" choices
     int indent = 0;           // Nesting level (0 = root, 1 = child, etc.)
     bool isGroup = false;     // Group header (no address, just a label)
 };

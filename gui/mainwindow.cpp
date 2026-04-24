@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QShortcut>
 #include <QInputDialog>
+#include <QColor>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -31,6 +32,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QStringList>
+#include <QMap>
 #include <cstring>
 
 namespace ce::gui {
@@ -563,6 +565,8 @@ void MainWindow::onSaveTable() {
             e.value = obj["value"].toString().toStdString();
             e.active = obj["active"].toBool();
             e.autoAsmScript = obj["asm"].toString().toStdString();
+            e.color = obj["color"].toString().toStdString();
+            e.dropdownList = obj["dropdown"].toString().toStdString();
             table.entries.push_back(e);
         }
         table.save(path.toStdString());
@@ -595,6 +599,8 @@ void MainWindow::onLoadTable() {
             obj["value"] = QString::fromStdString(e.value);
             obj["active"] = e.active;
             obj["asm"] = QString::fromStdString(e.autoAsmScript);
+            obj["color"] = QString::fromStdString(e.color);
+            obj["dropdown"] = QString::fromStdString(e.dropdownList);
             arr.append(obj);
         }
         loadAddressEntries(arr);
@@ -778,6 +784,46 @@ static ValueType strToType(const QString& s) {
     return ValueType::Int32;
 }
 
+static QMap<QString, QString> parseDropdownList(const QString& dropdownList) {
+    QMap<QString, QString> choices;
+    for (const auto& rawItem : dropdownList.split(';', Qt::SkipEmptyParts)) {
+        auto item = rawItem.trimmed();
+        auto sep = item.indexOf(':');
+        if (sep <= 0) continue;
+        auto value = item.left(sep).trimmed();
+        auto label = item.mid(sep + 1).trimmed();
+        if (!value.isEmpty())
+            choices[value] = label.isEmpty() ? value : label;
+    }
+    return choices;
+}
+
+static QString displayDropdownValue(const QString& value, const QString& dropdownList) {
+    auto choices = parseDropdownList(dropdownList);
+    auto it = choices.find(value.trimmed());
+    return it == choices.end() ? value : QString("%1 (%2)").arg(it.value(), it.key());
+}
+
+static QString resolveDropdownInput(const QString& input, const QString& dropdownList) {
+    auto choices = parseDropdownList(dropdownList);
+    auto trimmed = input.trimmed();
+    if (choices.contains(trimmed))
+        return trimmed;
+    for (auto it = choices.begin(); it != choices.end(); ++it) {
+        if (QString::compare(it.value(), trimmed, Qt::CaseInsensitive) == 0)
+            return it.key();
+    }
+    return input;
+}
+
+static QVariant entryForeground(const QString& color) {
+    if (color.isEmpty())
+        return {};
+    auto name = color.startsWith('#') ? color : "#" + color;
+    QColor parsed(name);
+    return parsed.isValid() ? QVariant(parsed) : QVariant();
+}
+
 static size_t vtSize(ValueType vt) {
     switch (vt) {
         case ValueType::Byte:   return 1;
@@ -894,6 +940,8 @@ QJsonArray AddressListModel::toJson() const {
         obj["value"] = e.currentValue;
         obj["active"] = e.active;
         obj["asm"] = e.autoAsmScript;
+        obj["color"] = e.color;
+        obj["dropdown"] = e.dropdownList;
         arr.append(obj);
     }
     return arr;
@@ -911,6 +959,8 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
         e.currentValue = obj["value"].toString();
         e.active = obj["active"].toBool();
         e.autoAsmScript = obj["asm"].toString();
+        e.color = obj["color"].toString();
+        e.dropdownList = obj["dropdown"].toString();
         if (e.active) e.frozenValue = e.currentValue;
         entries_.push_back(e);
     }
@@ -1026,8 +1076,16 @@ QVariant AddressListModel::data(const QModelIndex& index, int role) const {
     if (role == Qt::CheckStateRole && index.column() == 0)
         return entries_[index.row()].active ? Qt::Checked : Qt::Unchecked;
 
-    if (role != Qt::DisplayRole) return {};
     auto& e = entries_[index.row()];
+    if (role == Qt::ForegroundRole)
+        return entryForeground(e.color);
+    if (role == Qt::EditRole) {
+        if (index.column() == 1) return e.description;
+        if (index.column() == 4) return e.currentValue;
+        return {};
+    }
+    if (role != Qt::DisplayRole) return {};
+
     switch (index.column()) {
         case 1: {
             QString prefix;
@@ -1046,7 +1104,9 @@ QVariant AddressListModel::data(const QModelIndex& index, int role) const {
                 default: return "?";
             }
         }
-        case 4: return e.currentValue;
+        case 4: return e.dropdownList.isEmpty()
+            ? e.currentValue
+            : displayDropdownValue(e.currentValue, e.dropdownList);
         default: return {};
     }
 }
@@ -1086,10 +1146,13 @@ bool AddressListModel::setData(const QModelIndex& index, const QVariant& value, 
         }
         if (index.column() == 4) {
             auto& e = entries_[index.row()];
-            e.currentValue = value.toString();
-            if (e.active) e.frozenValue = value.toString();
+            auto rawValue = e.dropdownList.isEmpty()
+                ? value.toString()
+                : resolveDropdownInput(value.toString(), e.dropdownList);
+            e.currentValue = rawValue;
+            if (e.active) e.frozenValue = rawValue;
             if (proc_)
-                writeValueToProcess(proc_, e.address, e.type, value.toString());
+                writeValueToProcess(proc_, e.address, e.type, rawValue);
             emit dataChanged(index, index);
             return true;
         }
