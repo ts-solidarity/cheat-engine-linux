@@ -487,6 +487,20 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // FILLMEM(address, size, value)
+    if (startsWith(upper, "FILLMEM(") && line.back() == ')') {
+        auto args = trim(line.substr(8, line.size() - 9));
+        asmLines.push_back("__FILLMEM__:" + args);
+        return;
+    }
+
+    // NOP [count] — emit one or more 0x90 bytes at the active address.
+    if (upper == "NOP" || startsWith(upper, "NOP ")) {
+        auto count = trim(line.size() > 3 ? line.substr(3) : "1");
+        asmLines.push_back("__NOP__:" + count);
+        return;
+    }
+
     // Everything else is an assembly line or label definition
     asmLines.push_back(line);
 }
@@ -886,6 +900,61 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
                     }
                 }
             }
+            continue;
+        }
+        if (startsWith(trimmedLine, "__FILLMEM__:")) {
+            auto args = trimmedLine.substr(12);
+            auto parts = splitArgs(args, 3);
+            if (parts.size() != 3) {
+                result.error = "FILLMEM requires address, size, and value";
+                return result;
+            }
+
+            auto addr = resolveAddress(parts[0], allocs, labels, defines);
+            size_t size = 0;
+            uint64_t value = 0;
+            try {
+                size = std::stoull(trim(parts[1]), nullptr, 0);
+                value = std::stoull(trim(parts[2]), nullptr, 16);
+            } catch (...) {
+                result.error = "Invalid FILLMEM argument";
+                return result;
+            }
+            if (!addr || size == 0 || value > 0xff) {
+                result.error = "Invalid FILLMEM target or value";
+                return result;
+            }
+
+            std::vector<uint8_t> orig(size);
+            proc.read(addr, orig.data(), orig.size());
+            result.disableInfo.originals.push_back({addr, orig});
+
+            std::vector<uint8_t> data(size, static_cast<uint8_t>(value));
+            proc.write(addr, data.data(), data.size());
+            result.log.push_back("FILLMEM: " + parts[0] + " size=" + std::to_string(size));
+            continue;
+        }
+        if (startsWith(trimmedLine, "__NOP__:")) {
+            auto countExpr = trim(trimmedLine.substr(8));
+            size_t count = 1;
+            try {
+                count = countExpr.empty() ? 1 : std::stoull(countExpr, nullptr, 0);
+            } catch (...) {
+                result.error = "Invalid NOP count: " + countExpr;
+                return result;
+            }
+            if (count == 0) {
+                result.error = "NOP count must be greater than zero";
+                return result;
+            }
+
+            std::vector<uint8_t> orig(count);
+            proc.read(currentAddr, orig.data(), orig.size());
+            result.disableInfo.originals.push_back({currentAddr, orig});
+
+            std::vector<uint8_t> data(count, 0x90);
+            proc.write(currentAddr, data.data(), data.size());
+            currentAddr += data.size();
             continue;
         }
 
