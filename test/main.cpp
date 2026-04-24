@@ -159,6 +159,7 @@ static void test_code_analysis_references() {
         0xe8, 0xf4, 0x1f, 0x00, 0x00,             // call 0x3000
         0xc3                                            // ret
     };
+    code.insert(code.end(), 20, 0x00);
     std::vector<uint8_t> text = {'h', 'e', 'l', 'l', 'o', ' ', 'c', 'e', 0};
 
     ModuleInfo module{codeBase, 0x1000, "fake.so", "/tmp/fake.so", true};
@@ -170,14 +171,17 @@ static void test_code_analysis_references() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(proc, module);
     auto functions = analyzer.findReferencedFunctions(proc, module);
+    auto caves = analyzer.findCodeCaves(proc, module, 16);
 
     bool stringOk = strings.size() == 1 && strings[0].address == codeBase &&
         strings[0].target == stringBase && strings[0].text == "hello ce";
     bool functionOk = functions.size() == 1 && functions[0].address == codeBase + 7 &&
         functions[0].target == callTarget;
+    bool cavesOk = caves.size() == 1 && caves[0].address == codeBase + 13 && caves[0].size == 20;
 
     printf("  Referenced strings: %s\n", stringOk ? "OK" : "FAILED");
     printf("  Referenced functions: %s\n", functionOk ? "OK" : "FAILED");
+    printf("  Code caves: %s\n", cavesOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {

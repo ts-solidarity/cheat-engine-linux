@@ -2,6 +2,7 @@
 #include "analysis/code_analysis.hpp"
 
 #include <QHeaderView>
+#include <QLabel>
 #include <QPushButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -19,14 +20,20 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
 
     auto* top = new QHBoxLayout;
     moduleCombo_ = new QComboBox;
+    minCaveSizeSpin_ = new QSpinBox;
+    minCaveSizeSpin_->setRange(4, 4096);
+    minCaveSizeSpin_->setValue(16);
     auto* analyzeBtn = new QPushButton("Analyze");
     top->addWidget(moduleCombo_, 1);
+    top->addWidget(new QLabel("Min cave bytes:"));
+    top->addWidget(minCaveSizeSpin_);
     top->addWidget(analyzeBtn);
     layout->addLayout(top);
 
     auto* tabs = new QTabWidget;
     stringsTable_ = new QTableWidget;
     functionsTable_ = new QTableWidget;
+    cavesTable_ = new QTableWidget;
     for (auto* table : {stringsTable_, functionsTable_}) {
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({"Instruction", "Target", "Text"});
@@ -41,8 +48,20 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
             if (ok) emit navigateTo(addr);
         });
     }
+    cavesTable_->setColumnCount(2);
+    cavesTable_->setHorizontalHeaderLabels({"Address", "Size"});
+    cavesTable_->horizontalHeader()->setStretchLastSection(true);
+    cavesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    cavesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    cavesTable_->verticalHeader()->setVisible(false);
+    connect(cavesTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        bool ok = false;
+        auto addr = cavesTable_->item(row, 0)->text().toULongLong(&ok, 16);
+        if (ok) emit navigateTo(addr);
+    });
     tabs->addTab(stringsTable_, "Referenced Strings");
     tabs->addTab(functionsTable_, "Referenced Functions");
+    tabs->addTab(cavesTable_, "Code Caves");
     layout->addWidget(tabs, 1);
 
     statusLabel_ = new QLabel;
@@ -77,13 +96,16 @@ void CodeReferencesWindow::analyzeSelectedModule() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(*proc_, module);
     auto functions = analyzer.findReferencedFunctions(*proc_, module);
+    auto caves = analyzer.findCodeCaves(*proc_, module, minCaveSizeSpin_->value());
 
     fillTable(stringsTable_, strings);
     fillTable(functionsTable_, functions);
-    statusLabel_->setText(QString("%1: %2 strings, %3 functions")
+    fillCavesTable(caves);
+    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 caves")
         .arg(QString::fromStdString(module.name))
         .arg(strings.size())
-        .arg(functions.size()));
+        .arg(functions.size())
+        .arg(caves.size()));
 }
 
 void CodeReferencesWindow::fillTable(QTableWidget* table, const std::vector<CodeRef>& refs) {
@@ -93,6 +115,15 @@ void CodeReferencesWindow::fillTable(QTableWidget* table, const std::vector<Code
         table->setItem(row, 0, new QTableWidgetItem(QString("%1").arg(ref.address, 16, 16, QChar('0'))));
         table->setItem(row, 1, new QTableWidgetItem(QString("%1").arg(ref.target, 16, 16, QChar('0'))));
         table->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(ref.text)));
+    }
+}
+
+void CodeReferencesWindow::fillCavesTable(const std::vector<CodeCave>& caves) {
+    cavesTable_->setRowCount((int)caves.size());
+    for (int row = 0; row < (int)caves.size(); ++row) {
+        const auto& cave = caves[row];
+        cavesTable_->setItem(row, 0, new QTableWidgetItem(QString("%1").arg(cave.address, 16, 16, QChar('0'))));
+        cavesTable_->setItem(row, 1, new QTableWidgetItem(QString::number(cave.size)));
     }
 }
 

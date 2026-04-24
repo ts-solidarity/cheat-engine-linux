@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QMainWindow>
+#include <QSpinBox>
 #include <QTableWidget>
 
 namespace ce::gui {
@@ -20,14 +21,17 @@ signals:
 private:
     void analyzeSelectedModule();
     void fillTable(QTableWidget* table, const std::vector<ce::CodeRef>& refs);
+    void fillCavesTable(const std::vector<ce::CodeCave>& caves);
     ce::ModuleInfo selectedModule() const;
 
     ce::ProcessHandle* proc_;
     std::vector<ce::ModuleInfo> modules_;
     QComboBox* moduleCombo_;
     QLabel* statusLabel_;
+    QSpinBox* minCaveSizeSpin_;
     QTableWidget* stringsTable_;
     QTableWidget* functionsTable_;
+    QTableWidget* cavesTable_;
 };
 
 } // namespace ce::gui
