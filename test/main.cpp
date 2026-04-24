@@ -92,6 +92,21 @@ static void test_autoassembler_dealloc(pid_t pid) {
     printf("  dealloc: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_aobscanmodule(pid_t pid) {
+    printf("\n── Test: AutoAssembler aobscanmodule ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+
+    auto result = aa.execute(proc,
+        "[ENABLE]\n"
+        "aobscanmodule(sleep_elf, sleep, 7F 45 4C 46)\n"
+        "registersymbol(sleep_elf)\n");
+
+    bool ok = result.success && aa.resolveSymbol("sleep_elf") != 0;
+    printf("  aobscanmodule: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_requires_target(pid_t pid) {
     printf("\n── Test: AutoAssembler requires target ──\n");
 
@@ -283,6 +298,7 @@ int main(int argc, char* argv[]) {
     test_cheat_table_json();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
+    test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
     test_process_enumeration();

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <regex>
 #include <string_view>
+#include <vector>
 
 namespace ce {
 
@@ -25,6 +26,50 @@ static std::string toUpper(std::string s) {
 
 static bool startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+static std::string stripOptionalQuotes(std::string s) {
+    s = trim(s);
+    if (s.size() >= 2 &&
+        ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\''))) {
+        return s.substr(1, s.size() - 2);
+    }
+    return s;
+}
+
+static std::vector<std::string> splitArgs(const std::string& args, size_t maxParts) {
+    std::vector<std::string> parts;
+    std::string current;
+    char quote = 0;
+
+    for (char c : args) {
+        if ((c == '"' || c == '\'') && (quote == 0 || quote == c)) {
+            quote = quote == c ? 0 : c;
+            current.push_back(c);
+            continue;
+        }
+        if (c == ',' && quote == 0 && parts.size() + 1 < maxParts) {
+            parts.push_back(trim(current));
+            current.clear();
+            continue;
+        }
+        current.push_back(c);
+    }
+
+    parts.push_back(trim(current));
+    return parts;
+}
+
+static std::string formatHex(uintptr_t address) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lx", address);
+    return buf;
+}
+
+static bool moduleMatches(const ModuleInfo& module, const std::string& requested) {
+    auto req = stripOptionalQuotes(requested);
+    auto reqUpper = toUpper(req);
+    return toUpper(module.name) == reqUpper || toUpper(module.path) == reqUpper;
 }
 
 // Parse "name, size [, preferred]" from inside ALLOC(...)
@@ -164,16 +209,55 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // AOBSCANMODULE(name, module, pattern) — find pattern inside one module
+    if (startsWith(upper, "AOBSCANMODULE(") && line.back() == ')' && proc) {
+        auto args = line.substr(14, line.size() - 15);
+        auto parts = splitArgs(args, 3);
+        if (parts.size() == 3) {
+            auto name = trim(parts[0]);
+            auto moduleName = stripOptionalQuotes(parts[1]);
+            auto pattern = stripOptionalQuotes(parts[2]);
+
+            auto modules = proc->modules();
+            auto moduleIt = std::find_if(modules.begin(), modules.end(), [&](const ModuleInfo& module) {
+                return moduleMatches(module, moduleName);
+            });
+            if (moduleIt == modules.end()) {
+                log.push_back("AOBSCANMODULE: " + name + " module not found: " + moduleName);
+                return;
+            }
+
+            ScanConfig cfg;
+            cfg.valueType = ValueType::ByteArray;
+            cfg.parseAOB(pattern);
+            cfg.alignment = 1;
+            cfg.startAddress = moduleIt->base;
+            cfg.stopAddress = moduleIt->base + moduleIt->size;
+
+            MemoryScanner scanner;
+            auto result = scanner.firstScan(*proc, cfg);
+            if (result.count() > 0) {
+                uintptr_t addr = result.address(0);
+                Define d;
+                d.name = name;
+                d.value = formatHex(addr);
+                defines.push_back(d);
+                log.push_back("AOBSCANMODULE: " + name + " = 0x" + d.value +
+                    " in " + moduleIt->name + " (" + std::to_string(result.count()) + " matches)");
+            } else {
+                log.push_back("AOBSCANMODULE: " + name + " NOT FOUND in " + moduleIt->name);
+            }
+        }
+        return;
+    }
+
     // AOBSCAN(name, pattern) — find pattern
     if (startsWith(upper, "AOBSCAN(") && line.back() == ')' && proc) {
         auto args = line.substr(8, line.size() - 9);
-        auto comma = args.find(',');
-        if (comma != std::string::npos) {
-            auto name = trim(args.substr(0, comma));
-            auto pattern = trim(args.substr(comma + 1));
-            // Remove quotes
-            if (pattern.front() == '"') pattern = pattern.substr(1);
-            if (pattern.back() == '"') pattern.pop_back();
+        auto parts = splitArgs(args, 2);
+        if (parts.size() == 2) {
+            auto name = trim(parts[0]);
+            auto pattern = stripOptionalQuotes(parts[1]);
 
             // Use our scanner's AOB
             ScanConfig cfg;
@@ -187,12 +271,10 @@ void AutoAssembler::parseLine(const std::string& rawLine,
                 uintptr_t addr = result.address(0);
                 Define d;
                 d.name = name;
-                d.value = "0x" + std::to_string(addr); // Will be properly formatted
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%lx", addr);
-                d.value = std::string(buf);
+                d.value = formatHex(addr);
                 defines.push_back(d);
-                log.push_back("AOBSCAN: " + name + " = 0x" + std::string(buf) + " (" + std::to_string(result.count()) + " matches)");
+                log.push_back("AOBSCAN: " + name + " = 0x" + d.value +
+                    " (" + std::to_string(result.count()) + " matches)");
             } else {
                 log.push_back("AOBSCAN: " + name + " NOT FOUND");
             }
