@@ -636,6 +636,60 @@ static void test_unicode_string_scan() {
     printf("  UTF-16LE match: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_all_types_scan() {
+    printf("\n── Test: All types scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  vtAll numeric match: FAILED\n");
+        return;
+    }
+
+    std::memset(page, 0x7f, pageSize);
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+    uint8_t byteValue = 42;
+    int16_t wordValue = 42;
+    int32_t dwordValue = 42;
+    int64_t qwordValue = 42;
+    float floatValue = 42.0f;
+    double doubleValue = 42.0;
+    std::memcpy(bytes + 16, &byteValue, sizeof(byteValue));
+    std::memcpy(bytes + 32, &wordValue, sizeof(wordValue));
+    std::memcpy(bytes + 48, &dwordValue, sizeof(dwordValue));
+    std::memcpy(bytes + 64, &qwordValue, sizeof(qwordValue));
+    std::memcpy(bytes + 80, &floatValue, sizeof(floatValue));
+    std::memcpy(bytes + 96, &doubleValue, sizeof(doubleValue));
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+    ScanConfig config;
+    config.valueType = ValueType::All;
+    config.compareType = ScanCompare::Exact;
+    config.intValue = 42;
+    config.floatValue = 42.0;
+    config.alignment = 1;
+    config.startAddress = base;
+    config.stopAddress = base + pageSize;
+
+    auto result = scanner.firstScan(proc, config);
+    auto hasAddress = [&result](uintptr_t address) {
+        for (size_t i = 0; i < result.count(); ++i)
+            if (result.address(i) == address)
+                return true;
+        return false;
+    };
+    bool ok = hasAddress(base + 16) && hasAddress(base + 32) &&
+        hasAddress(base + 48) && hasAddress(base + 64) &&
+        hasAddress(base + 80) && hasAddress(base + 96);
+
+    munmap(page, pageSize);
+
+    printf("  vtAll numeric match: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -787,6 +841,7 @@ int main(int argc, char* argv[]) {
     test_lua_memscan();
     test_binary_scan_bitmask();
     test_unicode_string_scan();
+    test_all_types_scan();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

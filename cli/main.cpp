@@ -40,7 +40,7 @@ static void usage() {
         "  regions <pid>                 List memory regions\n"
         "\n"
         "Scan options:\n"
-        "  --type <type>     byte, i16, i32, i64, float, double, string, unicode, aob, binary (default: i32)\n"
+        "  --type <type>     byte, i16, i32, i64, float, double, string, unicode, aob, binary, all (default: i32)\n"
         "  --value <val>     Value to search for\n"
         "  --value2 <val>    Second value (for 'between')\n"
         "  --compare <cmp>   exact, greater, less, between, changed,\n"
@@ -65,6 +65,7 @@ static ValueType parseType(const char* s) {
     if (!strcmp(s, "unicode")) return ValueType::UnicodeString;
     if (!strcmp(s, "aob"))    return ValueType::ByteArray;
     if (!strcmp(s, "binary")) return ValueType::Binary;
+    if (!strcmp(s, "all"))    return ValueType::All;
     fprintf(stderr, "Unknown type: %s\n", s);
     exit(1);
 }
@@ -259,6 +260,13 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
             config.floatValue = atof(valueStr);
             if (value2Str) config.floatValue2 = atof(value2Str);
+        } else if (config.valueType == ValueType::All) {
+            config.intValue = atoll(valueStr);
+            config.floatValue = atof(valueStr);
+            if (value2Str) {
+                config.intValue2 = atoll(value2Str);
+                config.floatValue2 = atof(value2Str);
+            }
         } else {
             config.intValue = atoll(valueStr);
             if (value2Str) config.intValue2 = atoll(value2Str);

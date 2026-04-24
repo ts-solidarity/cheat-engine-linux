@@ -257,7 +257,7 @@ void MainWindow::setupUi() {
 
     // Value type
     valueTypeCombo_ = new QComboBox;
-    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary"});
+    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary", "All Types"});
     valueTypeCombo_->setCurrentIndex(2); // 4 Bytes default
     rightLayout->addWidget(valueTypeCombo_);
 
@@ -444,6 +444,7 @@ static ValueType mapValueType(int index) {
         case 7: return ValueType::UnicodeString;
         case 8: return ValueType::ByteArray;
         case 9: return ValueType::Binary;
+        case 10: return ValueType::All;
         default: return ValueType::Int32;
     }
 }
@@ -472,6 +473,9 @@ void MainWindow::onFirstScan() {
         config.parseBinary(text.toStdString());
         config.alignment = 1;
     } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
+        config.floatValue = text.toDouble();
+    } else if (config.valueType == ValueType::All) {
+        config.intValue = text.toLongLong();
         config.floatValue = text.toDouble();
     } else {
         config.intValue = text.toLongLong();
@@ -508,6 +512,9 @@ void MainWindow::onNextScan() {
         config.parseBinary(text.toStdString());
         config.alignment = 1;
     } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
+        config.floatValue = text.toDouble();
+    } else if (config.valueType == ValueType::All) {
+        config.intValue = text.toLongLong();
         config.floatValue = text.toDouble();
     } else {
         config.intValue = text.toLongLong();
