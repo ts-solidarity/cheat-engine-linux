@@ -883,6 +883,52 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             continue;
         }
 
+        if (startsWith(trimmedLine, "__LOADBINARY__:")) {
+            auto args = trimmedLine.substr(15);
+            auto parts = splitArgs(args, 2);
+            if (parts.size() != 2) {
+                result.error = "LOADBINARY requires address and filename";
+                return result;
+            }
+
+            auto addrExpr = trim(parts[0]);
+            auto filename = stripOptionalQuotes(parts[1]);
+            auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+            if (!addr) {
+                result.error = "Invalid LOADBINARY target: " + addrExpr;
+                return result;
+            }
+
+            std::ifstream binFile(filename, std::ios::binary);
+            if (!binFile) {
+                result.error = "LOADBINARY file not found: " + filename;
+                return result;
+            }
+
+            std::vector<uint8_t> data((std::istreambuf_iterator<char>(binFile)), {});
+            if (data.empty()) {
+                result.error = "LOADBINARY file is empty: " + filename;
+                return result;
+            }
+
+            std::vector<uint8_t> orig(data.size());
+            auto readResult = proc.read(addr, orig.data(), orig.size());
+            if (!readResult || *readResult < orig.size()) {
+                result.error = "LOADBINARY original-byte read failed at " + addrExpr;
+                return result;
+            }
+
+            result.disableInfo.originals.push_back({addr, orig});
+            auto writeResult = proc.write(addr, data.data(), data.size());
+            if (!writeResult || *writeResult < data.size()) {
+                result.error = "LOADBINARY write failed at " + addrExpr;
+                return result;
+            }
+
+            result.log.push_back("LOADBINARY: " + filename + " -> " + addrExpr);
+            continue;
+        }
+
         if (currentAddr == 0) {
             result.error = "No active assembly address for line: " + trimmedLine;
             return result;
@@ -930,28 +976,6 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
                         result.disableInfo.originals.push_back({currentAddr, orig});
                         proc.write(currentAddr, mem.data(), *rr);
                         currentAddr += *rr;
-                    }
-                }
-            }
-            continue;
-        }
-        if (startsWith(trimmedLine, "__LOADBINARY__:")) {
-            auto args = trimmedLine.substr(15);
-            auto comma = args.find(',');
-            if (comma != std::string::npos) {
-                auto addrExpr = trim(args.substr(0, comma));
-                auto filename = trim(args.substr(comma + 1));
-                if (!filename.empty() && filename.front() == '"') filename = filename.substr(1);
-                if (!filename.empty() && filename.back() == '"') filename.pop_back();
-                std::ifstream binFile(filename, std::ios::binary);
-                if (binFile) {
-                    std::vector<uint8_t> data((std::istreambuf_iterator<char>(binFile)), {});
-                    if (!data.empty()) {
-                        std::vector<uint8_t> orig(data.size());
-                        proc.read(currentAddr, orig.data(), orig.size());
-                        result.disableInfo.originals.push_back({currentAddr, orig});
-                        proc.write(currentAddr, data.data(), data.size());
-                        currentAddr += data.size();
                     }
                 }
             }

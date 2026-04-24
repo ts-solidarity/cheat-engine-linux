@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <csignal>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -197,6 +198,42 @@ static void test_autoassembler_ds(pid_t pid) {
     bool ok = result.success && std::memcmp(actual, "hello", sizeof(actual)) == 0;
     proc.free(addr, 4096);
     printf("  ds: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_autoassembler_loadbinary(pid_t pid) {
+    printf("\n── Test: AutoAssembler loadbinary ──\n");
+
+    LinuxProcessHandle proc(pid);
+    auto allocResult = proc.allocate(4096, MemProt::All);
+    if (!allocResult) {
+        printf("  loadbinary: FAILED\n");
+        return;
+    }
+    uintptr_t addr = *allocResult;
+
+    auto path = std::filesystem::temp_directory_path() /
+        ("cecore-loadbinary-" + std::to_string(getpid()) + ".bin");
+    const uint8_t expected[] = {0xde, 0xad, 0xbe, 0xef, 0x42};
+    {
+        std::ofstream f(path, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(expected), sizeof(expected));
+    }
+
+    char script[512];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "loadbinary(%lx, \"%s\")\n",
+        addr, path.c_str());
+
+    AutoAssembler aa;
+    auto result = aa.execute(proc, script);
+    uint8_t actual[sizeof(expected)] = {};
+    proc.read(addr, actual, sizeof(actual));
+
+    bool ok = result.success && std::memcmp(actual, expected, sizeof(actual)) == 0;
+    std::filesystem::remove(path);
+    proc.free(addr, 4096);
+    printf("  loadbinary: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_aobscanmodule(pid_t pid) {
@@ -449,6 +486,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_nop_fillmem(targetPid);
     test_autoassembler_ds(targetPid);
+    test_autoassembler_loadbinary(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_aobscanregion(targetPid);
     test_autoassembler_aobscanall(targetPid);
