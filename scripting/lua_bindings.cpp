@@ -23,6 +23,7 @@ extern "C" {
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace ce {
 
@@ -167,6 +168,150 @@ static int l_writeBytes(lua_State* L) {
         lua_pop(L, 1);
     }
     p->write(addr, bytes.data(), bytes.size());
+    return 0;
+}
+
+// ── Local memory read/write functions ──
+
+template <typename T>
+static T readLocalValue(uintptr_t addr) {
+    T value{};
+    std::memcpy(&value, reinterpret_cast<const void*>(addr), sizeof(T));
+    return value;
+}
+
+template <typename T>
+static void writeLocalValue(uintptr_t addr, T value) {
+    std::memcpy(reinterpret_cast<void*>(addr), &value, sizeof(T));
+}
+
+static int l_readByteLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushinteger(L, readLocalValue<uint8_t>(addr));
+    return 1;
+}
+
+static int l_readSmallIntegerLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushinteger(L, readLocalValue<int16_t>(addr));
+    return 1;
+}
+
+static int l_readIntegerLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushinteger(L, readLocalValue<int32_t>(addr));
+    return 1;
+}
+
+static int l_readQwordLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushinteger(L, readLocalValue<int64_t>(addr));
+    return 1;
+}
+
+static int l_readPointerLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushinteger(L, (lua_Integer)readLocalValue<uintptr_t>(addr));
+    return 1;
+}
+
+static int l_readFloatLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushnumber(L, readLocalValue<float>(addr));
+    return 1;
+}
+
+static int l_readDoubleLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    lua_pushnumber(L, readLocalValue<double>(addr));
+    return 1;
+}
+
+static int l_readBytesLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    int size = luaL_checkinteger(L, 2);
+    luaL_argcheck(L, size >= 0, 2, "size must be non-negative");
+
+    auto* bytes = reinterpret_cast<const uint8_t*>(addr);
+    lua_newtable(L);
+    for (int i = 0; i < size; ++i) {
+        lua_pushinteger(L, bytes[i]);
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
+static int l_readStringLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    int maxLen = luaL_optinteger(L, 2, 256);
+    luaL_argcheck(L, maxLen >= 0, 2, "max length must be non-negative");
+
+    auto* str = reinterpret_cast<const char*>(addr);
+    lua_pushlstring(L, str, strnlen(str, maxLen));
+    return 1;
+}
+
+static int l_writeByteLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<uint8_t>(addr, (uint8_t)luaL_checkinteger(L, 2));
+    return 0;
+}
+
+static int l_writeSmallIntegerLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<int16_t>(addr, (int16_t)luaL_checkinteger(L, 2));
+    return 0;
+}
+
+static int l_writeIntegerLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<int32_t>(addr, (int32_t)luaL_checkinteger(L, 2));
+    return 0;
+}
+
+static int l_writeQwordLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<int64_t>(addr, (int64_t)luaL_checkinteger(L, 2));
+    return 0;
+}
+
+static int l_writePointerLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<uintptr_t>(addr, (uintptr_t)luaL_checkinteger(L, 2));
+    return 0;
+}
+
+static int l_writeFloatLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<float>(addr, (float)luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int l_writeDoubleLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    writeLocalValue<double>(addr, luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int l_writeBytesLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    int n = (int)lua_rawlen(L, 2);
+    auto* bytes = reinterpret_cast<uint8_t*>(addr);
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, 2, i);
+        bytes[i - 1] = (uint8_t)lua_tointeger(L, -1);
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+static int l_writeStringLocal(lua_State* L) {
+    uintptr_t addr = (uintptr_t)luaL_checkinteger(L, 1);
+    size_t len = 0;
+    const char* str = luaL_checklstring(L, 2, &len);
+    std::memcpy(reinterpret_cast<void*>(addr), str, len);
+    reinterpret_cast<char*>(addr)[len] = '\0';
     return 0;
 }
 
@@ -774,6 +919,26 @@ void registerExtendedBindings(lua_State* L) {
     lua_register(L, "writeDouble", l_writeDouble);
     lua_register(L, "writeString", l_writeString);
     lua_register(L, "writeBytes", l_writeBytes);
+
+    // Local memory
+    lua_register(L, "readByteLocal", l_readByteLocal);
+    lua_register(L, "readSmallIntegerLocal", l_readSmallIntegerLocal);
+    lua_register(L, "readIntegerLocal", l_readIntegerLocal);
+    lua_register(L, "readQwordLocal", l_readQwordLocal);
+    lua_register(L, "readPointerLocal", l_readPointerLocal);
+    lua_register(L, "readFloatLocal", l_readFloatLocal);
+    lua_register(L, "readDoubleLocal", l_readDoubleLocal);
+    lua_register(L, "readBytesLocal", l_readBytesLocal);
+    lua_register(L, "readStringLocal", l_readStringLocal);
+    lua_register(L, "writeByteLocal", l_writeByteLocal);
+    lua_register(L, "writeSmallIntegerLocal", l_writeSmallIntegerLocal);
+    lua_register(L, "writeIntegerLocal", l_writeIntegerLocal);
+    lua_register(L, "writeQwordLocal", l_writeQwordLocal);
+    lua_register(L, "writePointerLocal", l_writePointerLocal);
+    lua_register(L, "writeFloatLocal", l_writeFloatLocal);
+    lua_register(L, "writeDoubleLocal", l_writeDoubleLocal);
+    lua_register(L, "writeBytesLocal", l_writeBytesLocal);
+    lua_register(L, "writeStringLocal", l_writeStringLocal);
 
     // Process info
     lua_register(L, "getProcessList", l_getProcessList);

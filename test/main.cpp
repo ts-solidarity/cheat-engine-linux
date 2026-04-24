@@ -370,6 +370,40 @@ static void test_lua_file_aliases() {
     printf("  readFile/writeFile: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_local_memory() {
+    printf("\n── Test: Lua local memory ──\n");
+
+    alignas(uintptr_t) uint8_t local[128] = {};
+    auto base = reinterpret_cast<uintptr_t>(local);
+
+    LuaEngine lua;
+    std::string script =
+        "local base = " + std::to_string(base) + "\n"
+        "writeByteLocal(base, 0x2a)\n"
+        "assert(readByteLocal(base) == 0x2a)\n"
+        "writeSmallIntegerLocal(base + 2, -1234)\n"
+        "assert(readSmallIntegerLocal(base + 2) == -1234)\n"
+        "writeIntegerLocal(base + 8, 0x12345678)\n"
+        "assert(readIntegerLocal(base + 8) == 0x12345678)\n"
+        "writeQwordLocal(base + 16, 0x112233445566778)\n"
+        "assert(readQwordLocal(base + 16) == 0x112233445566778)\n"
+        "writePointerLocal(base + 24, base)\n"
+        "assert(readPointerLocal(base + 24) == base)\n"
+        "writeFloatLocal(base + 40, 3.5)\n"
+        "assert(math.abs(readFloatLocal(base + 40) - 3.5) < 0.001)\n"
+        "writeDoubleLocal(base + 48, 9.25)\n"
+        "assert(math.abs(readDoubleLocal(base + 48) - 9.25) < 0.001)\n"
+        "writeBytesLocal(base + 64, {1, 2, 3, 255})\n"
+        "local bytes = readBytesLocal(base + 64, 4)\n"
+        "assert(bytes[1] == 1 and bytes[2] == 2 and bytes[3] == 3 and bytes[4] == 255)\n"
+        "writeStringLocal(base + 72, 'hello')\n"
+        "assert(readStringLocal(base + 72, 16) == 'hello')\n";
+
+    auto err = lua.execute(script);
+
+    printf("  read/write local variants: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_lua_autoassemble_check() {
     printf("\n── Test: Lua autoAssembleCheck ──\n");
 
@@ -552,6 +586,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
     test_lua_file_aliases();
+    test_lua_local_memory();
     test_lua_autoassemble_check();
     test_lua_process_bindings(targetPid);
     test_process_enumeration();
