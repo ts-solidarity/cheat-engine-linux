@@ -70,6 +70,27 @@ static void test_autoassembler_unregister_symbol(pid_t pid) {
     printf("  unregistersymbol: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_dealloc(pid_t pid) {
+    printf("\n── Test: AutoAssembler dealloc ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+
+    auto allocResult = aa.execute(proc, "[ENABLE]\nalloc(tempblock, 4096)\n");
+    auto deallocResult = aa.execute(proc, "[ENABLE]\ndealloc(tempblock)\n");
+
+    bool sawDeallocLog = false;
+    for (const auto& line : deallocResult.log) {
+        if (line == "DEALLOC: tempblock") {
+            sawDeallocLog = true;
+            break;
+        }
+    }
+
+    bool ok = allocResult.success && deallocResult.success && sawDeallocLog;
+    printf("  dealloc: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -202,6 +223,7 @@ int main(int argc, char* argv[]) {
 
     test_cheat_table_json();
     test_autoassembler_unregister_symbol(targetPid);
+    test_autoassembler_dealloc(targetPid);
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

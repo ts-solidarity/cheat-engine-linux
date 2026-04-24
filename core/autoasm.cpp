@@ -94,8 +94,11 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
-    // DEALLOC — handled in disable section, skip during enable
-    if (startsWith(upper, "DEALLOC(")) return;
+    if (startsWith(upper, "DEALLOC(") && line.back() == ')') {
+        auto args = line.substr(8, line.size() - 9);
+        asmLines.push_back("__DEALLOC__:" + args);
+        return;
+    }
 
     // LABEL(name1, name2, ...)
     if (startsWith(upper, "LABEL(") && line.back() == ')') {
@@ -393,6 +396,7 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         if (r) {
             a.address = *r;
             result.disableInfo.allocs.push_back({a.name, a.address, a.size});
+            knownAllocations_[a.name] = {a.name, a.address, a.size};
             result.log.push_back("Allocated " + a.name + " at 0x" +
                 ([&]{ char b[32]; snprintf(b, 32, "%lx", a.address); return std::string(b); })());
         } else {
@@ -528,6 +532,35 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
                 globalSymbols_.erase(name);
                 result.disableInfo.symbols.erase(name);
                 result.log.push_back("UNREGISTERSYMBOL: " + name);
+            }
+            continue;
+        }
+        if (startsWith(trimmedLine, "__DEALLOC__:")) {
+            auto args = trimmedLine.substr(12);
+            std::istringstream allocStream(args);
+            std::string name;
+            while (std::getline(allocStream, name, ',')) {
+                name = trim(name);
+                if (name.empty()) continue;
+
+                auto it = knownAllocations_.find(name);
+                if (it == knownAllocations_.end()) {
+                    result.log.push_back("DEALLOC: " + name + " not tracked");
+                    continue;
+                }
+
+                auto freeResult = proc.free(it->second.address, it->second.size);
+                if (!freeResult) {
+                    result.error = "DEALLOC failed for " + name + ": " + freeResult.error().message();
+                    return result;
+                }
+
+                result.disableInfo.allocs.erase(
+                    std::remove_if(result.disableInfo.allocs.begin(), result.disableInfo.allocs.end(),
+                        [&](const DisableInfo::AllocEntry& alloc) { return alloc.name == name; }),
+                    result.disableInfo.allocs.end());
+                result.log.push_back("DEALLOC: " + name);
+                knownAllocations_.erase(it);
             }
             continue;
         }
@@ -688,6 +721,7 @@ AutoAsmResult AutoAssembler::disable(ProcessHandle& proc, const std::string& scr
     // Free allocated memory
     for (auto& a : info.allocs) {
         proc.free(a.address, a.size);
+        knownAllocations_.erase(a.name);
     }
 
     // Unregister symbols
