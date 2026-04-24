@@ -1,5 +1,6 @@
 #include "platform/linux/linux_process.hpp"
 #include "platform/linux/ptrace_wrapper.hpp"
+#include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
 
 #include <cstdio>
@@ -55,6 +56,18 @@ static void test_cheat_table_json() {
         loaded.entries[0].autoAsmScript == entry.autoAsmScript;
 
     printf("  JSON round trip: %s\n", matches ? "OK" : "FAILED");
+}
+
+static void test_autoassembler_unregister_symbol(pid_t pid) {
+    printf("\n── Test: AutoAssembler unregistersymbol ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+    aa.registerSymbol("stale_symbol", 0x1234);
+
+    auto result = aa.execute(proc, "[ENABLE]\nunregistersymbol(stale_symbol)\n");
+    bool ok = result.success && aa.resolveSymbol("stale_symbol") == 0;
+    printf("  unregistersymbol: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_process_enumeration() {
@@ -188,6 +201,7 @@ int main(int argc, char* argv[]) {
     }
 
     test_cheat_table_json();
+    test_autoassembler_unregister_symbol(targetPid);
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

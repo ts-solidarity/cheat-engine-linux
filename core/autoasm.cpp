@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstring>
 #include <regex>
+#include <string_view>
 
 namespace ce {
 
@@ -133,8 +134,12 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
-    // UNREGISTERSYMBOL — handled in disable
-    if (startsWith(upper, "UNREGISTERSYMBOL(")) return;
+    if (startsWith(upper, "UNREGISTERSYMBOL(") && line.back() == ')') {
+        constexpr std::string_view prefix = "UNREGISTERSYMBOL(";
+        auto args = line.substr(prefix.size(), line.size() - prefix.size() - 1);
+        asmLines.push_back("__UNREGISTERSYMBOL__:" + args);
+        return;
+    }
 
     // FULLACCESS(address, size) — make memory writable
     if (startsWith(upper, "FULLACCESS(") && line.back() == ')') {
@@ -511,6 +516,19 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             }
 
             result.log.push_back("ASSERT OK: " + addrExpr);
+            continue;
+        }
+        if (startsWith(trimmedLine, "__UNREGISTERSYMBOL__:")) {
+            auto args = trimmedLine.substr(21);
+            std::istringstream symbolStream(args);
+            std::string name;
+            while (std::getline(symbolStream, name, ',')) {
+                name = trim(name);
+                if (name.empty()) continue;
+                globalSymbols_.erase(name);
+                result.disableInfo.symbols.erase(name);
+                result.log.push_back("UNREGISTERSYMBOL: " + name);
+            }
             continue;
         }
 
