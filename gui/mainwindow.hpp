@@ -44,6 +44,7 @@ private slots:
 private:
     void setupUi();
     void setupMenus();
+    void loadAddressEntries(const QJsonArray& entries);
     void updateScanButtons();
 
     // Process
