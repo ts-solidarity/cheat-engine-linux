@@ -18,14 +18,22 @@ extern "C" {
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QApplication>
+#include <QMetaObject>
+#include <cstdio>
+#include <cstring>
 #include <unordered_map>
 #include <string>
-#include <functional>
 
 namespace ce {
 
-// Store Lua callback references per widget
-static std::unordered_map<QObject*, int> luaCallbacks; // widget → Lua registry ref
+struct CallbackBinding {
+    int ref = LUA_NOREF;
+    QMetaObject::Connection connection;
+};
+
+// Store Lua callback references per Qt object.
+static std::unordered_map<QObject*, CallbackBinding> clickCallbacks;
+static std::unordered_map<QObject*, CallbackBinding> timerCallbacks;
 static lua_State* guiLuaState = nullptr;
 
 // ── Widget userdata wrapper ──
@@ -48,6 +56,45 @@ static void pushWidget(lua_State* L, QWidget* w, QTimer* t = nullptr) {
     luaL_setmetatable(L, WIDGET_MT);
 }
 
+static void unrefCallback(int ref) {
+    if (guiLuaState && ref != LUA_NOREF && ref != LUA_REFNIL)
+        luaL_unref(guiLuaState, LUA_REGISTRYINDEX, ref);
+}
+
+static void clearCallback(QObject* object, std::unordered_map<QObject*, CallbackBinding>& callbacks) {
+    auto it = callbacks.find(object);
+    if (it == callbacks.end())
+        return;
+    QObject::disconnect(it->second.connection);
+    unrefCallback(it->second.ref);
+    callbacks.erase(it);
+}
+
+static int storeCallback(lua_State* L, int index) {
+    lua_pushvalue(L, index);
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+static void invokeLuaCallback(int ref, QWidget* widget, QTimer* timer = nullptr) {
+    if (!guiLuaState)
+        return;
+
+    lua_rawgeti(guiLuaState, LUA_REGISTRYINDEX, ref);
+    pushWidget(guiLuaState, widget, timer);
+    if (lua_pcall(guiLuaState, 1, 0, 0) != LUA_OK) {
+        const char* err = lua_tostring(guiLuaState, -1);
+        std::fprintf(stderr, "[CE Lua GUI] callback error: %s\n", err ? err : "unknown error");
+        lua_pop(guiLuaState, 1);
+    }
+}
+
+static void trackDestroyed(QObject* object) {
+    QObject::connect(object, &QObject::destroyed, [object]() {
+        clearCallback(object, clickCallbacks);
+        clearCallback(object, timerCallbacks);
+    });
+}
+
 // ── Property get ──
 static int widget_index(lua_State* L) {
     auto* lw = checkWidget(L, 1);
@@ -63,7 +110,10 @@ static int widget_index(lua_State* L) {
     if (!strcmp(key, "Width")) { lua_pushinteger(L, w->width()); return 1; }
     if (!strcmp(key, "Height")) { lua_pushinteger(L, w->height()); return 1; }
     if (!strcmp(key, "Visible")) { lua_pushboolean(L, w->isVisible()); return 1; }
-    if (!strcmp(key, "Enabled")) { lua_pushboolean(L, w->isEnabled()); return 1; }
+    if (!strcmp(key, "Enabled")) {
+        lua_pushboolean(L, lw->timer ? lw->timer->isActive() : w->isEnabled());
+        return 1;
+    }
     if (!strcmp(key, "Checked")) {
         if (auto* cb = qobject_cast<QCheckBox*>(w)) { lua_pushboolean(L, cb->isChecked()); return 1; }
     }
@@ -109,7 +159,15 @@ static int widget_newindex(lua_State* L) {
     if (!strcmp(key, "Width")) { w->resize(luaL_checkinteger(L, 3), w->height()); return 0; }
     if (!strcmp(key, "Height")) { w->resize(w->width(), luaL_checkinteger(L, 3)); return 0; }
     if (!strcmp(key, "Visible")) { w->setVisible(lua_toboolean(L, 3)); return 0; }
-    if (!strcmp(key, "Enabled")) { w->setEnabled(lua_toboolean(L, 3)); return 0; }
+    if (!strcmp(key, "Enabled")) {
+        if (lw->timer) {
+            if (lua_toboolean(L, 3)) lw->timer->start();
+            else lw->timer->stop();
+        } else {
+            w->setEnabled(lua_toboolean(L, 3));
+        }
+        return 0;
+    }
     if (!strcmp(key, "Checked")) {
         if (auto* cb = qobject_cast<QCheckBox*>(w)) cb->setChecked(lua_toboolean(L, 3));
         return 0;
@@ -117,34 +175,42 @@ static int widget_newindex(lua_State* L) {
     if (!strcmp(key, "Interval") && lw->timer) { lw->timer->setInterval(luaL_checkinteger(L, 3)); return 0; }
 
     // Event handlers
-    if (!strcmp(key, "OnClick") && lua_isfunction(L, 3)) {
-        lua_pushvalue(L, 3);
-        int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        luaCallbacks[w] = ref;
+    if (!strcmp(key, "OnClick")) {
+        clearCallback(w, clickCallbacks);
+        if (lua_isnil(L, 3))
+            return 0;
+        luaL_checktype(L, 3, LUA_TFUNCTION);
+        int ref = storeCallback(L, 3);
+        CallbackBinding binding;
+        binding.ref = ref;
         if (auto* btn = qobject_cast<QPushButton*>(w)) {
-            QObject::connect(btn, &QPushButton::clicked, [ref]() {
-                if (!guiLuaState) return;
-                lua_rawgeti(guiLuaState, LUA_REGISTRYINDEX, ref);
-                lua_pcall(guiLuaState, 0, 0, 0);
+            binding.connection = QObject::connect(btn, &QPushButton::clicked, [ref, w]() {
+                invokeLuaCallback(ref, w);
             });
-        }
-        if (auto* cb = qobject_cast<QCheckBox*>(w)) {
-            QObject::connect(cb, &QCheckBox::toggled, [ref]() {
-                if (!guiLuaState) return;
-                lua_rawgeti(guiLuaState, LUA_REGISTRYINDEX, ref);
-                lua_pcall(guiLuaState, 0, 0, 0);
+            clickCallbacks[w] = binding;
+            return 0;
+        } else if (auto* cb = qobject_cast<QCheckBox*>(w)) {
+            binding.connection = QObject::connect(cb, &QCheckBox::toggled, [ref, w]() {
+                invokeLuaCallback(ref, w);
             });
+            clickCallbacks[w] = binding;
+            return 0;
         }
+        unrefCallback(ref);
         return 0;
     }
-    if (!strcmp(key, "OnTimer") && lw->timer && lua_isfunction(L, 3)) {
-        lua_pushvalue(L, 3);
-        int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        QObject::connect(lw->timer, &QTimer::timeout, [ref]() {
-            if (!guiLuaState) return;
-            lua_rawgeti(guiLuaState, LUA_REGISTRYINDEX, ref);
-            lua_pcall(guiLuaState, 0, 0, 0);
+    if (!strcmp(key, "OnTimer") && lw->timer) {
+        clearCallback(lw->timer, timerCallbacks);
+        if (lua_isnil(L, 3))
+            return 0;
+        luaL_checktype(L, 3, LUA_TFUNCTION);
+        int ref = storeCallback(L, 3);
+        CallbackBinding binding;
+        binding.ref = ref;
+        binding.connection = QObject::connect(lw->timer, &QTimer::timeout, [ref, w, timer = lw->timer]() {
+            invokeLuaCallback(ref, w, timer);
         });
+        timerCallbacks[lw->timer] = binding;
         return 0;
     }
 
@@ -168,6 +234,7 @@ static int l_createForm(lua_State* L) {
     w->resize(400, 300);
     w->setAttribute(Qt::WA_DeleteOnClose);
     w->setLayout(new QVBoxLayout);
+    trackDestroyed(w);
     pushWidget(L, w);
     return 1;
 }
@@ -176,6 +243,7 @@ static int l_createButton(lua_State* L) {
     auto* parent = getParentWidget(L, 1);
     auto* btn = new QPushButton("Button", parent);
     if (parent && parent->layout()) parent->layout()->addWidget(btn);
+    trackDestroyed(btn);
     pushWidget(L, btn);
     return 1;
 }
@@ -184,6 +252,7 @@ static int l_createLabel(lua_State* L) {
     auto* parent = getParentWidget(L, 1);
     auto* lbl = new QLabel("Label", parent);
     if (parent && parent->layout()) parent->layout()->addWidget(lbl);
+    trackDestroyed(lbl);
     pushWidget(L, lbl);
     return 1;
 }
@@ -192,6 +261,7 @@ static int l_createEdit(lua_State* L) {
     auto* parent = getParentWidget(L, 1);
     auto* ed = new QLineEdit(parent);
     if (parent && parent->layout()) parent->layout()->addWidget(ed);
+    trackDestroyed(ed);
     pushWidget(L, ed);
     return 1;
 }
@@ -200,16 +270,27 @@ static int l_createCheckBox(lua_State* L) {
     auto* parent = getParentWidget(L, 1);
     auto* cb = new QCheckBox("CheckBox", parent);
     if (parent && parent->layout()) parent->layout()->addWidget(cb);
+    trackDestroyed(cb);
     pushWidget(L, cb);
     return 1;
 }
 
 static int l_createTimer(lua_State* L) {
     auto* parent = getParentWidget(L, 1);
+    int enabledIndex = 1;
+    if (lua_isuserdata(L, 1) || lua_isnil(L, 1))
+        enabledIndex = 2;
+    bool enabled = !lua_isnoneornil(L, enabledIndex) && lua_toboolean(L, enabledIndex);
+
     auto* timer = new QTimer(parent);
+    timer->setInterval(1000);
     // Timer doesn't have a visual widget, but we wrap it as one for property access
     auto* dummy = new QWidget(parent); // Hidden
     dummy->hide();
+    trackDestroyed(dummy);
+    trackDestroyed(timer);
+    if (enabled)
+        timer->start();
     pushWidget(L, dummy, timer);
     return 1;
 }

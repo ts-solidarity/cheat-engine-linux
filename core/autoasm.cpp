@@ -6,6 +6,8 @@
 #include <cctype>
 #include <cstring>
 #include <regex>
+#include <string_view>
+#include <vector>
 
 namespace ce {
 
@@ -24,6 +26,183 @@ static std::string toUpper(std::string s) {
 
 static bool startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+static std::string stripOptionalQuotes(std::string s) {
+    s = trim(s);
+    if (s.size() >= 2 &&
+        ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\''))) {
+        return s.substr(1, s.size() - 2);
+    }
+    return s;
+}
+
+static std::vector<std::string> splitArgs(const std::string& args, size_t maxParts) {
+    std::vector<std::string> parts;
+    std::string current;
+    char quote = 0;
+
+    for (char c : args) {
+        if ((c == '"' || c == '\'') && (quote == 0 || quote == c)) {
+            quote = quote == c ? 0 : c;
+            current.push_back(c);
+            continue;
+        }
+        if (c == ',' && quote == 0 && parts.size() + 1 < maxParts) {
+            parts.push_back(trim(current));
+            current.clear();
+            continue;
+        }
+        current.push_back(c);
+    }
+
+    parts.push_back(trim(current));
+    return parts;
+}
+
+static std::string formatHex(uintptr_t address) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lx", address);
+    return buf;
+}
+
+static bool parseWholeUnsigned(const std::string& text, int base, uint64_t& value) {
+    auto s = trim(text);
+    if (s.empty())
+        return false;
+
+    size_t parsed = 0;
+    try {
+        value = std::stoull(s, &parsed, base);
+    } catch (...) {
+        return false;
+    }
+    return parsed == s.size();
+}
+
+static bool moduleMatches(const ModuleInfo& module, const std::string& requested) {
+    auto req = stripOptionalQuotes(requested);
+    auto reqUpper = toUpper(req);
+    return toUpper(module.name) == reqUpper || toUpper(module.path) == reqUpper;
+}
+
+static size_t findAobInRange(ProcessHandle& proc, uintptr_t start, uintptr_t stop,
+                             const std::vector<uint8_t>& pattern,
+                             const std::vector<bool>& mask,
+                             uintptr_t& firstMatch) {
+    if (pattern.empty() || stop <= start)
+        return 0;
+
+    size_t matches = 0;
+    auto regions = proc.queryRegions();
+    for (const auto& region : regions) {
+        if (region.state != MemState::Committed || !(region.protection & MemProt::Read))
+            continue;
+
+        uintptr_t regionStart = std::max(region.base, start);
+        uintptr_t regionEnd = std::min(region.base + region.size, stop);
+        if (regionEnd <= regionStart || regionEnd - regionStart < pattern.size())
+            continue;
+
+        std::vector<uint8_t> buffer(regionEnd - regionStart);
+        auto readResult = proc.read(regionStart, buffer.data(), buffer.size());
+        if (!readResult || *readResult < pattern.size())
+            continue;
+
+        size_t bytesRead = *readResult;
+        size_t limit = bytesRead - pattern.size() + 1;
+        for (size_t offset = 0; offset < limit; ++offset) {
+            bool matched = true;
+            for (size_t i = 0; i < pattern.size(); ++i) {
+                if (i < mask.size() && !mask[i])
+                    continue;
+                if (buffer[offset + i] != pattern[i]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                if (matches == 0)
+                    firstMatch = regionStart + offset;
+                ++matches;
+            }
+        }
+    }
+
+    return matches;
+}
+
+static std::vector<std::string> splitDataValues(const std::string& data) {
+    std::vector<std::string> values;
+    std::string current;
+    char quote = 0;
+
+    for (char c : data) {
+        if ((c == '"' || c == '\'') && (quote == 0 || quote == c)) {
+            quote = quote == c ? 0 : c;
+            current.push_back(c);
+            continue;
+        }
+        if (quote == 0 && (c == ',' || std::isspace(static_cast<unsigned char>(c)))) {
+            if (!trim(current).empty()) {
+                values.push_back(trim(current));
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(c);
+    }
+
+    if (!trim(current).empty())
+        values.push_back(trim(current));
+    return values;
+}
+
+static bool parseDataDirective(const std::string& op, const std::string& data,
+                               std::vector<uint8_t>& bytes, std::string& error) {
+    size_t width = 1;
+    if (op == "DW") width = 2;
+    else if (op == "DD") width = 4;
+    else if (op == "DQ") width = 8;
+
+    auto values = splitDataValues(data);
+    if (values.empty()) {
+        error = op + " requires at least one value";
+        return false;
+    }
+
+    uint64_t maxValue = width == 8 ? UINT64_MAX : ((uint64_t{1} << (width * 8)) - 1);
+    for (auto token : values) {
+        token = trim(token);
+        if (token.size() >= 2 &&
+            ((token.front() == '"' && token.back() == '"') || (token.front() == '\'' && token.back() == '\''))) {
+            if (width != 1) {
+                error = op + " string literal is only supported for DB";
+                return false;
+            }
+            auto text = stripOptionalQuotes(token);
+            bytes.insert(bytes.end(), text.begin(), text.end());
+            continue;
+        }
+
+        uint64_t value = 0;
+        try {
+            value = std::stoull(token, nullptr, 16);
+        } catch (...) {
+            error = "Invalid " + op + " value: " + token;
+            return false;
+        }
+
+        if (value > maxValue) {
+            error = op + " value out of range: " + token;
+            return false;
+        }
+
+        for (size_t i = 0; i < width; ++i)
+            bytes.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+
+    return true;
 }
 
 // Parse "name, size [, preferred]" from inside ALLOC(...)
@@ -93,8 +272,11 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
-    // DEALLOC — handled in disable section, skip during enable
-    if (startsWith(upper, "DEALLOC(")) return;
+    if (startsWith(upper, "DEALLOC(") && line.back() == ')') {
+        auto args = line.substr(8, line.size() - 9);
+        asmLines.push_back("__DEALLOC__:" + args);
+        return;
+    }
 
     // LABEL(name1, name2, ...)
     if (startsWith(upper, "LABEL(") && line.back() == ')') {
@@ -133,30 +315,129 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
-    // UNREGISTERSYMBOL — handled in disable
-    if (startsWith(upper, "UNREGISTERSYMBOL(")) return;
+    if (startsWith(upper, "UNREGISTERSYMBOL(") && line.back() == ')') {
+        constexpr std::string_view prefix = "UNREGISTERSYMBOL(";
+        auto args = line.substr(prefix.size(), line.size() - prefix.size() - 1);
+        asmLines.push_back("__UNREGISTERSYMBOL__:" + args);
+        return;
+    }
 
     // FULLACCESS(address, size) — make memory writable
-    if (startsWith(upper, "FULLACCESS(") && line.back() == ')' && proc) {
+    if (startsWith(upper, "FULLACCESS(") && line.back() == ')') {
         auto args = line.substr(11, line.size() - 12);
-        auto comma = args.find(',');
-        if (comma != std::string::npos) {
-            auto addrStr = trim(args.substr(0, comma));
-            auto sizeStr = trim(args.substr(comma + 1));
-            // Resolve later in phase 2
-        }
+        asmLines.push_back("__FULLACCESS__:" + args);
         return;
     }
 
     // ASSERT(address, bytes) — verify bytes at address before proceeding
-    if (startsWith(upper, "ASSERT(") && line.back() == ')' && proc) {
+    if (startsWith(upper, "ASSERT(") && line.back() == ')') {
         auto args = line.substr(7, line.size() - 8);
         auto comma = args.find(',');
         if (comma != std::string::npos) {
             auto addrExpr = trim(args.substr(0, comma));
             auto bytesStr = trim(args.substr(comma + 1));
-            // Will be resolved and checked in phase 2
             log.push_back("ASSERT: " + addrExpr + " = " + bytesStr);
+        }
+        asmLines.push_back("__ASSERT__:" + args);
+        return;
+    }
+
+    // AOBSCANREGION(name, start, stop, pattern) — find pattern in an address range
+    if (startsWith(upper, "AOBSCANREGION(") && line.back() == ')' && proc) {
+        auto args = line.substr(14, line.size() - 15);
+        auto parts = splitArgs(args, 4);
+        if (parts.size() == 4) {
+            auto name = trim(parts[0]);
+            auto startExpr = trim(parts[1]);
+            auto stopExpr = trim(parts[2]);
+            auto pattern = stripOptionalQuotes(parts[3]);
+            auto start = resolveAddress(startExpr, allocs, labels, defines);
+            auto stop = resolveAddress(stopExpr, allocs, labels, defines);
+            if (!start || !stop || stop <= start) {
+                log.push_back("AOBSCANREGION: " + name + " invalid range");
+                return;
+            }
+
+            ScanConfig cfg;
+            cfg.parseAOB(pattern);
+            uintptr_t addr = 0;
+            size_t matches = findAobInRange(*proc, start, stop, cfg.byteArray, cfg.byteArrayMask, addr);
+            if (matches > 0) {
+                Define d;
+                d.name = name;
+                d.value = formatHex(addr);
+                defines.push_back(d);
+                log.push_back("AOBSCANREGION: " + name + " = 0x" + d.value +
+                    " (" + std::to_string(matches) + " matches)");
+            } else {
+                log.push_back("AOBSCANREGION: " + name + " NOT FOUND");
+            }
+        }
+        return;
+    }
+
+    // AOBSCANALL(name, pattern) — find pattern across all readable memory
+    if (startsWith(upper, "AOBSCANALL(") && line.back() == ')' && proc) {
+        auto args = line.substr(11, line.size() - 12);
+        auto parts = splitArgs(args, 2);
+        if (parts.size() == 2) {
+            auto name = trim(parts[0]);
+            auto pattern = stripOptionalQuotes(parts[1]);
+
+            ScanConfig cfg;
+            cfg.valueType = ValueType::ByteArray;
+            cfg.parseAOB(pattern);
+            cfg.alignment = 1;
+
+            MemoryScanner scanner;
+            auto result = scanner.firstScan(*proc, cfg);
+            if (result.count() > 0) {
+                Define d;
+                d.name = name;
+                d.value = formatHex(result.address(0));
+                defines.push_back(d);
+                log.push_back("AOBSCANALL: " + name + " = 0x" + d.value +
+                    " (" + std::to_string(result.count()) + " matches)");
+            } else {
+                log.push_back("AOBSCANALL: " + name + " NOT FOUND");
+            }
+        }
+        return;
+    }
+
+    // AOBSCANMODULE(name, module, pattern) — find pattern inside one module
+    if (startsWith(upper, "AOBSCANMODULE(") && line.back() == ')' && proc) {
+        auto args = line.substr(14, line.size() - 15);
+        auto parts = splitArgs(args, 3);
+        if (parts.size() == 3) {
+            auto name = trim(parts[0]);
+            auto moduleName = stripOptionalQuotes(parts[1]);
+            auto pattern = stripOptionalQuotes(parts[2]);
+
+            auto modules = proc->modules();
+            auto moduleIt = std::find_if(modules.begin(), modules.end(), [&](const ModuleInfo& module) {
+                return moduleMatches(module, moduleName);
+            });
+            if (moduleIt == modules.end()) {
+                log.push_back("AOBSCANMODULE: " + name + " module not found: " + moduleName);
+                return;
+            }
+
+            ScanConfig cfg;
+            cfg.parseAOB(pattern);
+            uintptr_t addr = 0;
+            size_t matches = findAobInRange(*proc, moduleIt->base, moduleIt->base + moduleIt->size,
+                cfg.byteArray, cfg.byteArrayMask, addr);
+            if (matches > 0) {
+                Define d;
+                d.name = name;
+                d.value = formatHex(addr);
+                defines.push_back(d);
+                log.push_back("AOBSCANMODULE: " + name + " = 0x" + d.value +
+                    " in " + moduleIt->name + " (" + std::to_string(matches) + " matches)");
+            } else {
+                log.push_back("AOBSCANMODULE: " + name + " NOT FOUND in " + moduleIt->name);
+            }
         }
         return;
     }
@@ -164,13 +445,10 @@ void AutoAssembler::parseLine(const std::string& rawLine,
     // AOBSCAN(name, pattern) — find pattern
     if (startsWith(upper, "AOBSCAN(") && line.back() == ')' && proc) {
         auto args = line.substr(8, line.size() - 9);
-        auto comma = args.find(',');
-        if (comma != std::string::npos) {
-            auto name = trim(args.substr(0, comma));
-            auto pattern = trim(args.substr(comma + 1));
-            // Remove quotes
-            if (pattern.front() == '"') pattern = pattern.substr(1);
-            if (pattern.back() == '"') pattern.pop_back();
+        auto parts = splitArgs(args, 2);
+        if (parts.size() == 2) {
+            auto name = trim(parts[0]);
+            auto pattern = stripOptionalQuotes(parts[1]);
 
             // Use our scanner's AOB
             ScanConfig cfg;
@@ -184,12 +462,10 @@ void AutoAssembler::parseLine(const std::string& rawLine,
                 uintptr_t addr = result.address(0);
                 Define d;
                 d.name = name;
-                d.value = "0x" + std::to_string(addr); // Will be properly formatted
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%lx", addr);
-                d.value = std::string(buf);
+                d.value = formatHex(addr);
                 defines.push_back(d);
-                log.push_back("AOBSCAN: " + name + " = 0x" + std::string(buf) + " (" + std::to_string(result.count()) + " matches)");
+                log.push_back("AOBSCAN: " + name + " = 0x" + d.value +
+                    " (" + std::to_string(result.count()) + " matches)");
             } else {
                 log.push_back("AOBSCAN: " + name + " NOT FOUND");
             }
@@ -254,6 +530,26 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // FILLMEM(address, size, value)
+    if (startsWith(upper, "FILLMEM(") && line.back() == ')') {
+        auto args = trim(line.substr(8, line.size() - 9));
+        asmLines.push_back("__FILLMEM__:" + args);
+        return;
+    }
+
+    // NOP [count] — emit one or more 0x90 bytes at the active address.
+    if (upper == "NOP" || startsWith(upper, "NOP ")) {
+        auto count = trim(line.size() > 3 ? line.substr(3) : "1");
+        asmLines.push_back("__NOP__:" + count);
+        return;
+    }
+
+    // DS "text" — emit string bytes at the active address.
+    if (startsWith(upper, "DS ")) {
+        asmLines.push_back("__DS__:" + trim(line.substr(3)));
+        return;
+    }
+
     // Everything else is an assembly line or label definition
     asmLines.push_back(line);
 }
@@ -277,15 +573,14 @@ uintptr_t AutoAssembler::resolveAddress(const std::string& expr,
     // Check defines
     for (auto& d : defines)
         if (d.name == name) {
-            try { return std::stoull(d.value, nullptr, 16); } catch (...) {}
+            uint64_t parsed = 0;
+            if (parseWholeUnsigned(d.value, 16, parsed))
+                return static_cast<uintptr_t>(parsed);
         }
 
     // Check global symbols
     auto it = globalSymbols_.find(name);
     if (it != globalSymbols_.end()) return it->second;
-
-    // Try as hex address
-    try { return std::stoull(name, nullptr, 16); } catch (...) {}
 
     // Try module+offset format (module.exe+1234)
     auto plus = name.find('+');
@@ -294,9 +589,16 @@ uintptr_t AutoAssembler::resolveAddress(const std::string& expr,
         auto offset = name.substr(plus + 1);
         auto baseAddr = resolveAddress(base, allocs, labels, defines);
         if (baseAddr) {
-            try { return baseAddr + std::stoull(offset, nullptr, 16); } catch (...) {}
+            uint64_t parsedOffset = 0;
+            if (parseWholeUnsigned(offset, 16, parsedOffset))
+                return baseAddr + static_cast<uintptr_t>(parsedOffset);
         }
     }
+
+    // Try as hex address
+    uint64_t parsed = 0;
+    if (parseWholeUnsigned(name, 16, parsed))
+        return static_cast<uintptr_t>(parsed);
 
     return 0;
 }
@@ -393,6 +695,7 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         if (r) {
             a.address = *r;
             result.disableInfo.allocs.push_back({a.name, a.address, a.size});
+            knownAllocations_[a.name] = {a.name, a.address, a.size};
             result.log.push_back("Allocated " + a.name + " at 0x" +
                 ([&]{ char b[32]; snprintf(b, 32, "%lx", a.address); return std::string(b); })());
         } else {
@@ -412,36 +715,177 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         if (trimmedLine.back() == ':' && trimmedLine.find(' ') == std::string::npos) {
             auto labelName = trimmedLine.substr(0, trimmedLine.size() - 1);
 
-            // Is this an alloc name? Set currentAddr
+            bool handledLabel = false;
+
+            // Is this an alloc name? Set currentAddr to that block.
             for (auto& a : allocs) {
                 if (a.name == labelName) {
                     currentAddr = a.address;
+                    handledLabel = true;
                     break;
                 }
             }
+            if (handledLabel) continue;
 
-            // Is this a known label? Update its address
+            // Is this a declared internal label? Bind it to the active block address.
             for (auto& l : labels) {
                 if (l.name == labelName) {
+                    if (currentAddr == 0) {
+                        result.error = "Label has no active assembly address: " + labelName;
+                        return result;
+                    }
                     l.address = currentAddr;
+                    handledLabel = true;
                     break;
                 }
             }
+            if (handledLabel) continue;
 
-            // Could be an address expression (game.exe+1234:)
-            if (currentAddr == 0) {
-                currentAddr = resolveAddress(labelName, allocs, labels, defines);
+            // Otherwise this must be a target address expression (game.exe+1234:).
+            auto targetAddr = resolveAddress(labelName, allocs, labels, defines);
+            if (targetAddr == 0) {
+                result.error = "Unresolved auto-assembler target: " + labelName;
+                return result;
+            }
+            currentAddr = targetAddr;
+            continue;
+        }
+
+        // Handle special deferred directives
+        if (startsWith(trimmedLine, "__FULLACCESS__:")) {
+            auto args = trimmedLine.substr(15);
+            auto comma = args.find(',');
+            if (comma == std::string::npos) {
+                result.error = "FULLACCESS requires address and size";
+                return result;
+            }
+
+            auto addrExpr = trim(args.substr(0, comma));
+            auto sizeStr = trim(args.substr(comma + 1));
+            auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+            size_t size = 0;
+            try {
+                size = std::stoull(sizeStr, nullptr, 0);
+            } catch (...) {
+                result.error = "Invalid FULLACCESS size: " + sizeStr;
+                return result;
+            }
+
+            if (!addr || size == 0) {
+                result.error = "Invalid FULLACCESS target: " + addrExpr;
+                return result;
+            }
+
+            auto protectResult = proc.protect(addr, size, MemProt::All);
+            if (!protectResult) {
+                result.error = "FULLACCESS failed at " + addrExpr + ": " + protectResult.error().message();
+                return result;
+            }
+            result.log.push_back("FULLACCESS: " + addrExpr + " size=" + std::to_string(size));
+            continue;
+        }
+        if (startsWith(trimmedLine, "__ASSERT__:")) {
+            auto args = trimmedLine.substr(11);
+            auto comma = args.find(',');
+            if (comma == std::string::npos) {
+                result.error = "ASSERT requires address and bytes";
+                return result;
+            }
+
+            auto addrExpr = trim(args.substr(0, comma));
+            auto bytesStr = trim(args.substr(comma + 1));
+            auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+            if (!addr) {
+                result.error = "Invalid ASSERT target: " + addrExpr;
+                return result;
+            }
+
+            if (!bytesStr.empty() && bytesStr.front() == '"') bytesStr = bytesStr.substr(1);
+            if (!bytesStr.empty() && bytesStr.back() == '"') bytesStr.pop_back();
+
+            ScanConfig pattern;
+            pattern.parseAOB(bytesStr);
+            if (pattern.byteArray.empty()) {
+                result.error = "ASSERT has no bytes: " + bytesStr;
+                return result;
+            }
+
+            std::vector<uint8_t> current(pattern.byteArray.size());
+            auto readResult = proc.read(addr, current.data(), current.size());
+            if (!readResult || *readResult < current.size()) {
+                result.error = "ASSERT read failed at " + addrExpr;
+                return result;
+            }
+
+            for (size_t i = 0; i < pattern.byteArray.size(); ++i) {
+                if (i < pattern.byteArrayMask.size() && !pattern.byteArrayMask[i])
+                    continue;
+                if (current[i] != pattern.byteArray[i]) {
+                    char expected[8];
+                    char actual[8];
+                    snprintf(expected, sizeof(expected), "%02x", pattern.byteArray[i]);
+                    snprintf(actual, sizeof(actual), "%02x", current[i]);
+                    result.error = "ASSERT failed at " + addrExpr + "+" + std::to_string(i) +
+                        ": expected " + expected + ", got " + actual;
+                    return result;
+                }
+            }
+
+            result.log.push_back("ASSERT OK: " + addrExpr);
+            continue;
+        }
+        if (startsWith(trimmedLine, "__UNREGISTERSYMBOL__:")) {
+            auto args = trimmedLine.substr(21);
+            std::istringstream symbolStream(args);
+            std::string name;
+            while (std::getline(symbolStream, name, ',')) {
+                name = trim(name);
+                if (name.empty()) continue;
+                globalSymbols_.erase(name);
+                result.disableInfo.symbols.erase(name);
+                result.log.push_back("UNREGISTERSYMBOL: " + name);
+            }
+            continue;
+        }
+        if (startsWith(trimmedLine, "__DEALLOC__:")) {
+            auto args = trimmedLine.substr(12);
+            std::istringstream allocStream(args);
+            std::string name;
+            while (std::getline(allocStream, name, ',')) {
+                name = trim(name);
+                if (name.empty()) continue;
+
+                auto it = knownAllocations_.find(name);
+                if (it == knownAllocations_.end()) {
+                    result.log.push_back("DEALLOC: " + name + " not tracked");
+                    continue;
+                }
+
+                auto freeResult = proc.free(it->second.address, it->second.size);
+                if (!freeResult) {
+                    result.error = "DEALLOC failed for " + name + ": " + freeResult.error().message();
+                    return result;
+                }
+
+                result.disableInfo.allocs.erase(
+                    std::remove_if(result.disableInfo.allocs.begin(), result.disableInfo.allocs.end(),
+                        [&](const DisableInfo::AllocEntry& alloc) { return alloc.name == name; }),
+                    result.disableInfo.allocs.end());
+                result.log.push_back("DEALLOC: " + name);
+                knownAllocations_.erase(it);
             }
             continue;
         }
 
-        if (currentAddr == 0) continue;
-
-        // Handle special deferred directives
         if (startsWith(trimmedLine, "__CREATETHREAD__:") || startsWith(trimmedLine, "__CREATETHREADANDWAIT__:")) {
             // Defer to after all writes — store address expression for later
             result.log.push_back("Deferred: " + trimmedLine);
             continue;
+        }
+
+        if (currentAddr == 0) {
+            result.error = "No active assembly address for line: " + trimmedLine;
+            return result;
         }
         if (startsWith(trimmedLine, "__REASSEMBLE__:")) {
             auto addrExpr = trimmedLine.substr(15);
@@ -513,20 +957,90 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             }
             continue;
         }
+        if (startsWith(trimmedLine, "__FILLMEM__:")) {
+            auto args = trimmedLine.substr(12);
+            auto parts = splitArgs(args, 3);
+            if (parts.size() != 3) {
+                result.error = "FILLMEM requires address, size, and value";
+                return result;
+            }
+
+            auto addr = resolveAddress(parts[0], allocs, labels, defines);
+            size_t size = 0;
+            uint64_t value = 0;
+            try {
+                size = std::stoull(trim(parts[1]), nullptr, 0);
+                value = std::stoull(trim(parts[2]), nullptr, 16);
+            } catch (...) {
+                result.error = "Invalid FILLMEM argument";
+                return result;
+            }
+            if (!addr || size == 0 || value > 0xff) {
+                result.error = "Invalid FILLMEM target or value";
+                return result;
+            }
+
+            std::vector<uint8_t> orig(size);
+            proc.read(addr, orig.data(), orig.size());
+            result.disableInfo.originals.push_back({addr, orig});
+
+            std::vector<uint8_t> data(size, static_cast<uint8_t>(value));
+            proc.write(addr, data.data(), data.size());
+            result.log.push_back("FILLMEM: " + parts[0] + " size=" + std::to_string(size));
+            continue;
+        }
+        if (startsWith(trimmedLine, "__NOP__:")) {
+            auto countExpr = trim(trimmedLine.substr(8));
+            size_t count = 1;
+            try {
+                count = countExpr.empty() ? 1 : std::stoull(countExpr, nullptr, 0);
+            } catch (...) {
+                result.error = "Invalid NOP count: " + countExpr;
+                return result;
+            }
+            if (count == 0) {
+                result.error = "NOP count must be greater than zero";
+                return result;
+            }
+
+            std::vector<uint8_t> orig(count);
+            proc.read(currentAddr, orig.data(), orig.size());
+            result.disableInfo.originals.push_back({currentAddr, orig});
+
+            std::vector<uint8_t> data(count, 0x90);
+            proc.write(currentAddr, data.data(), data.size());
+            currentAddr += data.size();
+            continue;
+        }
+        if (startsWith(trimmedLine, "__DS__:")) {
+            auto text = stripOptionalQuotes(trimmedLine.substr(7));
+            if (text.empty()) {
+                result.error = "DS requires a string";
+                return result;
+            }
+
+            std::vector<uint8_t> data(text.begin(), text.end());
+            std::vector<uint8_t> orig(data.size());
+            proc.read(currentAddr, orig.data(), orig.size());
+            result.disableInfo.originals.push_back({currentAddr, orig});
+
+            proc.write(currentAddr, data.data(), data.size());
+            currentAddr += data.size();
+            continue;
+        }
 
         // Handle db/dw/dd/dq directives
         auto upper = toUpper(trimmedLine);
         if (startsWith(upper, "DB ") || startsWith(upper, "DW ") ||
             startsWith(upper, "DD ") || startsWith(upper, "DQ ")) {
 
+            auto op = upper.substr(0, 2);
             auto dataStr = trim(trimmedLine.substr(3));
             std::vector<uint8_t> dataBytes;
-
-            // Parse hex bytes
-            std::istringstream dss(dataStr);
-            std::string tok;
-            while (dss >> tok) {
-                try { dataBytes.push_back((uint8_t)std::stoul(tok, nullptr, 16)); } catch (...) {}
+            std::string parseError;
+            if (!parseDataDirective(op, dataStr, dataBytes, parseError)) {
+                result.error = parseError;
+                return result;
             }
 
             if (!dataBytes.empty()) {
@@ -592,6 +1106,7 @@ AutoAsmResult AutoAssembler::disable(ProcessHandle& proc, const std::string& scr
     // Free allocated memory
     for (auto& a : info.allocs) {
         proc.free(a.address, a.size);
+        knownAllocations_.erase(a.name);
     }
 
     // Unregister symbols

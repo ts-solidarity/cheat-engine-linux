@@ -6,6 +6,8 @@
 #include <sys/user.h>
 #include <signal.h>
 #include <cstring>
+#include <chrono>
+#include <cerrno>
 #include <unistd.h>
 
 namespace ce {
@@ -36,11 +38,19 @@ bool DebugSession::attach(pid_t pid, ProcessHandle* proc) {
         stopContext_.rax = regs.rax;
     }
 
+    eventThread_ = std::thread(&DebugSession::eventLoop, this);
     return true;
 }
 
 void DebugSession::detach() {
-    if (!attached_) return;
+    if (!attached_.exchange(false)) return;
+
+    if (eventThread_.joinable()) {
+        if (eventThread_.get_id() == std::this_thread::get_id())
+            eventThread_.detach();
+        else
+            eventThread_.join();
+    }
 
     // Remove all software breakpoints
     {
@@ -53,7 +63,6 @@ void DebugSession::detach() {
     }
 
     ptrace(PTRACE_DETACH, pid_, nullptr, nullptr);
-    attached_ = false;
     stopped_ = false;
 }
 
@@ -93,75 +102,94 @@ void DebugSession::removeSoftwareBreakpoint(int id) {
 void DebugSession::continueExecution() {
     if (!attached_ || !stopped_) return;
     stopped_ = false;
-    ptrace(PTRACE_CONT, pid_, nullptr, nullptr);
+    if (ptrace(PTRACE_CONT, pid_, nullptr, nullptr) < 0)
+        stopped_ = true;
+}
 
-    // Wait for next stop in this thread (simplified — should be async)
-    int status;
-    waitpid(pid_, &status, 0);
-    stopped_ = true;
-
-    if (WIFSTOPPED(status)) {
-        int sig = WSTOPSIG(status);
-
-        struct user_regs_struct regs;
-        ptrace(PTRACE_GETREGS, pid_, nullptr, &regs);
-
-        {
-            std::lock_guard lock(contextMutex_);
-            stopContext_.rip = regs.rip;
-            stopContext_.rsp = regs.rsp;
-            stopContext_.rax = regs.rax;
-            stopContext_.rbx = regs.rbx;
-            stopContext_.rcx = regs.rcx;
-            stopContext_.rdx = regs.rdx;
-            stopContext_.rsi = regs.rsi;
-            stopContext_.rdi = regs.rdi;
-            stopContext_.rbp = regs.rbp;
-            stopContext_.rflags = regs.eflags;
+void DebugSession::eventLoop() {
+    while (attached_.load()) {
+        int status = 0;
+        pid_t waited = waitpid(pid_, &status, WNOHANG);
+        if (waited == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
         }
-
-        if (sig == SIGTRAP) {
-            // Check if we hit a software breakpoint (RIP is one past the int3)
-            uintptr_t bpAddr = regs.rip - 1;
-            std::lock_guard lock(bpMutex_);
-            auto it = softBreakpoints_.find(bpAddr);
-            if (it != softBreakpoints_.end()) {
-                // Restore original byte
-                proc_->write(bpAddr, &it->second.originalByte, 1);
-                // Back up RIP to the breakpoint address
-                regs.rip = bpAddr;
-                ptrace(PTRACE_SETREGS, pid_, nullptr, &regs);
-
-                DebugEvent evt;
-                evt.type = DebugEventType::BreakpointHit;
-                evt.tid = pid_;
-                evt.address = bpAddr;
-                evt.signal = sig;
-                evt.context = stopContext_;
-                if (eventCb_) eventCb_(evt);
-
-                // Re-set the breakpoint after single-stepping past it
-                ptrace(PTRACE_SINGLESTEP, pid_, nullptr, nullptr);
-                waitpid(pid_, &status, 0);
-                uint8_t int3 = 0xCC;
-                proc_->write(bpAddr, &int3, 1);
+        if (waited < 0) {
+            if (errno == ECHILD) {
+                attached_ = false;
+                stopped_ = false;
                 return;
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
         }
 
-        DebugEvent evt;
-        evt.type = (sig == SIGTRAP) ? DebugEventType::SingleStep : DebugEventType::SignalReceived;
-        evt.tid = pid_;
-        evt.address = regs.rip;
-        evt.signal = sig;
-        evt.context = stopContext_;
-        if (eventCb_) eventCb_(evt);
-    } else if (WIFEXITED(status) || WIFSIGNALED(status)) {
-        DebugEvent evt;
-        evt.type = DebugEventType::ProcessExited;
-        evt.tid = pid_;
-        if (eventCb_) eventCb_(evt);
-        attached_ = false;
+        stopped_ = true;
+
+        if (WIFSTOPPED(status)) {
+            int sig = WSTOPSIG(status);
+
+            struct user_regs_struct regs;
+            ptrace(PTRACE_GETREGS, pid_, nullptr, &regs);
+
+            {
+                std::lock_guard lock(contextMutex_);
+                stopContext_.rip = regs.rip;
+                stopContext_.rsp = regs.rsp;
+                stopContext_.rax = regs.rax;
+                stopContext_.rbx = regs.rbx;
+                stopContext_.rcx = regs.rcx;
+                stopContext_.rdx = regs.rdx;
+                stopContext_.rsi = regs.rsi;
+                stopContext_.rdi = regs.rdi;
+                stopContext_.rbp = regs.rbp;
+                stopContext_.rflags = regs.eflags;
+            }
+
+            if (sig == SIGTRAP) {
+                // Check if we hit a software breakpoint (RIP is one past the int3)
+                uintptr_t bpAddr = regs.rip - 1;
+                std::lock_guard lock(bpMutex_);
+                auto it = softBreakpoints_.find(bpAddr);
+                if (it != softBreakpoints_.end()) {
+                    // Restore original byte
+                    proc_->write(bpAddr, &it->second.originalByte, 1);
+                    // Back up RIP to the breakpoint address
+                    regs.rip = bpAddr;
+                    ptrace(PTRACE_SETREGS, pid_, nullptr, &regs);
+
+                    DebugEvent evt;
+                    evt.type = DebugEventType::BreakpointHit;
+                    evt.tid = pid_;
+                    evt.address = bpAddr;
+                    evt.signal = sig;
+                    evt.context = stopContext_;
+                    if (eventCb_) eventCb_(evt);
+
+                    // Re-set the breakpoint after single-stepping past it
+                    ptrace(PTRACE_SINGLESTEP, pid_, nullptr, nullptr);
+                    waitpid(pid_, &status, 0);
+                    uint8_t int3 = 0xCC;
+                    proc_->write(bpAddr, &int3, 1);
+                    continue;
+                }
+            }
+
+            DebugEvent evt;
+            evt.type = (sig == SIGTRAP) ? DebugEventType::SingleStep : DebugEventType::SignalReceived;
+            evt.tid = pid_;
+            evt.address = regs.rip;
+            evt.signal = sig;
+            evt.context = stopContext_;
+            if (eventCb_) eventCb_(evt);
+        } else if (WIFEXITED(status) || WIFSIGNALED(status)) {
+            DebugEvent evt;
+            evt.type = DebugEventType::ProcessExited;
+            evt.tid = pid_;
+            if (eventCb_) eventCb_(evt);
+            attached_ = false;
+            stopped_ = false;
+        }
     }
 }
 

@@ -74,6 +74,7 @@ private:
 
     // ── Global symbol table ──
     std::unordered_map<std::string, uintptr_t> globalSymbols_;
+    std::unordered_map<std::string, DisableInfo::AllocEntry> knownAllocations_;
     Assembler asm64_{AsmArch::X86_64};
 };
 

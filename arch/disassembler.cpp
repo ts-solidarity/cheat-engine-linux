@@ -27,7 +27,7 @@ Disassembler::Disassembler(Arch arch) : arch_(arch) {
     if (cs_open(cs_a, cs_m, &h) != CS_ERR_OK)
         throw std::runtime_error("Failed to initialize Capstone");
 
-    cs_option(h, CS_OPT_DETAIL, CS_OPT_OFF); // We don't need detailed operand info yet
+    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
     handle_ = h;
 }
 

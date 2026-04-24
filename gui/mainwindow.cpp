@@ -30,6 +30,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QStringList>
 #include <cstring>
 
 namespace ce::gui {
@@ -557,6 +558,7 @@ void MainWindow::onSaveTable() {
             else e.type = ValueType::Int32;
             e.value = obj["value"].toString().toStdString();
             e.active = obj["active"].toBool();
+            e.autoAsmScript = obj["asm"].toString().toStdString();
             table.entries.push_back(e);
         }
         table.save(path.toStdString());
@@ -588,16 +590,56 @@ void MainWindow::onLoadTable() {
             obj["type"] = QString::number((int)e.type);
             obj["value"] = QString::fromStdString(e.value);
             obj["active"] = e.active;
+            obj["asm"] = QString::fromStdString(e.autoAsmScript);
             arr.append(obj);
         }
-        addressListModel_->fromJson(arr);
+        loadAddressEntries(arr);
     } else {
         // Load JSON
         QFile f(path);
         if (!f.open(QIODevice::ReadOnly)) return;
         auto doc = QJsonDocument::fromJson(f.readAll());
         if (!doc.isObject()) return;
-        addressListModel_->fromJson(doc.object()["entries"].toArray());
+        loadAddressEntries(doc.object()["entries"].toArray());
+    }
+}
+
+void MainWindow::loadAddressEntries(const QJsonArray& entries) {
+    QJsonArray normalized = entries;
+    QStringList failures;
+    bool skippedForMissingProcess = false;
+
+    for (int i = 0; i < normalized.size(); ++i) {
+        auto obj = normalized[i].toObject();
+        auto script = obj["asm"].toString();
+        if (!obj["active"].toBool() || script.isEmpty())
+            continue;
+
+        if (!process_) {
+            obj["active"] = false;
+            skippedForMissingProcess = true;
+            normalized.replace(i, obj);
+            continue;
+        }
+
+        auto result = autoAsm_.execute(*process_, script.toStdString());
+        if (!result.success) {
+            obj["active"] = false;
+            normalized.replace(i, obj);
+            auto desc = obj["description"].toString("Unnamed entry");
+            failures << QString("%1: %2").arg(desc, QString::fromStdString(result.error));
+        }
+    }
+
+    addressListModel_->fromJson(normalized);
+
+    if (skippedForMissingProcess) {
+        QMessageBox::warning(this, "Process required",
+            "Some active auto-assembler records were loaded inactive because no process is open.");
+    }
+    if (!failures.isEmpty()) {
+        QMessageBox::warning(this, "Auto-assembler activation failed",
+            failures.join('\n'));
     }
 }
 
@@ -712,6 +754,23 @@ static ValueType strToType(const QString& s) {
     if (s == "i64")    return ValueType::Int64;
     if (s == "float")  return ValueType::Float;
     if (s == "double") return ValueType::Double;
+    bool ok = false;
+    int raw = s.toInt(&ok);
+    if (ok) {
+        switch (raw) {
+            case 0: return ValueType::Byte;
+            case 1: return ValueType::Int16;
+            case 2: return ValueType::Int32;
+            case 3: return ValueType::Int64;
+            case 4: return ValueType::Float;
+            case 5: return ValueType::Double;
+            case 6: return ValueType::String;
+            case 8: return ValueType::ByteArray;
+            case 9: return ValueType::Binary;
+            case 10: return ValueType::All;
+            default: break;
+        }
+    }
     return ValueType::Int32;
 }
 
@@ -795,6 +854,7 @@ QJsonArray AddressListModel::toJson() const {
         obj["type"] = typeToStr(e.type);
         obj["value"] = e.currentValue;
         obj["active"] = e.active;
+        obj["asm"] = e.autoAsmScript;
         arr.append(obj);
     }
     return arr;
@@ -811,6 +871,7 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
         e.type = strToType(obj["type"].toString());
         e.currentValue = obj["value"].toString();
         e.active = obj["active"].toBool();
+        e.autoAsmScript = obj["asm"].toString();
         if (e.active) e.frozenValue = e.currentValue;
         entries_.push_back(e);
     }
