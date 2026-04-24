@@ -805,6 +805,54 @@ static void writeValueToProcess(ProcessHandle* proc, uintptr_t addr, ValueType t
     proc->write(addr, buf, vs);
 }
 
+static bool readComparableValue(ProcessHandle* proc, uintptr_t addr, ValueType type, double& value) {
+    uint8_t buf[8] = {};
+    size_t vs = vtSize(type);
+    auto r = proc->read(addr, buf, vs);
+    if (!r || *r < vs) return false;
+
+    switch (type) {
+        case ValueType::Byte: {
+            uint8_t v; memcpy(&v, buf, 1); value = v; return true;
+        }
+        case ValueType::Int16: {
+            int16_t v; memcpy(&v, buf, 2); value = v; return true;
+        }
+        case ValueType::Int32: {
+            int32_t v; memcpy(&v, buf, 4); value = v; return true;
+        }
+        case ValueType::Int64: {
+            int64_t v; memcpy(&v, buf, 8); value = static_cast<double>(v); return true;
+        }
+        case ValueType::Float: {
+            float v; memcpy(&v, buf, 4); value = v; return true;
+        }
+        case ValueType::Double: {
+            double v; memcpy(&v, buf, 8); value = v; return true;
+        }
+        default:
+            return false;
+    }
+}
+
+static bool parseComparableValue(ValueType type, const QString& valStr, double& value) {
+    bool ok = false;
+    switch (type) {
+        case ValueType::Byte:
+        case ValueType::Int16:
+        case ValueType::Int32:
+        case ValueType::Int64:
+            value = valStr.toLongLong(&ok);
+            return ok;
+        case ValueType::Float:
+        case ValueType::Double:
+            value = valStr.toDouble(&ok);
+            return ok;
+        default:
+            return false;
+    }
+}
+
 void AddressListModel::freezeWrite(ProcessHandle* proc) {
     for (auto& e : entries_) {
         if (!e.active || e.frozenValue.isEmpty()) continue;
@@ -814,24 +862,11 @@ void AddressListModel::freezeWrite(ProcessHandle* proc) {
             continue;
         }
 
-        // Read current value to compare for directional freeze
-        uint8_t buf[8] = {};
-        size_t vs = vtSize(e.type);
-        auto r = proc->read(e.address, buf, vs);
-        if (!r) continue;
-
-        int64_t current = 0, frozen = 0;
-        if (e.type == ValueType::Int32) {
-            int32_t c, f;
-            memcpy(&c, buf, 4);
-            f = e.frozenValue.toInt();
-            current = c; frozen = f;
-        } else if (e.type == ValueType::Float) {
-            float c, f;
-            memcpy(&c, buf, 4);
-            f = e.frozenValue.toFloat();
-            current = (int64_t)(c * 1000); frozen = (int64_t)(f * 1000);
-        } else {
+        // Read current value to compare for directional freeze.
+        double current = 0;
+        double frozen = 0;
+        if (!readComparableValue(proc, e.address, e.type, current) ||
+            !parseComparableValue(e.type, e.frozenValue, frozen)) {
             writeValueToProcess(proc, e.address, e.type, e.frozenValue);
             continue;
         }
