@@ -12,6 +12,8 @@
 #include "core/ct_file.hpp"
 
 #include <QMenuBar>
+#include <QApplication>
+#include <QClipboard>
 #include <QPixmap>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -331,6 +333,7 @@ void MainWindow::setupUi() {
         auto selected = addressListView_->selectionModel()->selectedRows();
 
         if (!selected.isEmpty()) {
+            menu.addAction("Copy", this, &MainWindow::onCopyAddresses, QKeySequence::Copy);
             menu.addAction("Delete", this, &MainWindow::onDeleteAddresses, QKeySequence::Delete);
 
             menu.addSeparator();
@@ -377,12 +380,17 @@ void MainWindow::setupUi() {
         menu.addAction("Add Group", [this]() {
             addressListModel_->addEntry(0, ValueType::Int32, "-- Group --");
         });
+        menu.addAction("Paste", this, &MainWindow::onPasteAddresses, QKeySequence::Paste);
 
         menu.exec(addressListView_->viewport()->mapToGlobal(pos));
     });
     // Delete key shortcut
     auto* delShortcut = new QShortcut(QKeySequence::Delete, addressListView_);
     connect(delShortcut, &QShortcut::activated, this, &MainWindow::onDeleteAddresses);
+    auto* copyShortcut = new QShortcut(QKeySequence::Copy, addressListView_);
+    connect(copyShortcut, &QShortcut::activated, this, &MainWindow::onCopyAddresses);
+    auto* pasteShortcut = new QShortcut(QKeySequence::Paste, addressListView_);
+    connect(pasteShortcut, &QShortcut::activated, this, &MainWindow::onPasteAddresses);
 
     // Main splitter (top / bottom)
     auto* mainSplitter = new QSplitter(Qt::Vertical);
@@ -531,6 +539,52 @@ void MainWindow::onDeleteAddresses() {
     QList<int> rows;
     for (auto& idx : selected) rows.append(idx.row());
     addressListModel_->removeEntries(rows);
+}
+
+void MainWindow::onCopyAddresses() {
+    auto selected = addressListView_->selectionModel()->selectedRows();
+    if (selected.isEmpty()) return;
+
+    std::sort(selected.begin(), selected.end(), [](const QModelIndex& a, const QModelIndex& b) {
+        return a.row() < b.row();
+    });
+
+    auto allEntries = addressListModel_->toJson();
+    QJsonArray copied;
+    for (const auto& idx : selected) {
+        if (idx.row() >= 0 && idx.row() < allEntries.size())
+            copied.append(allEntries[idx.row()].toObject());
+    }
+
+    QApplication::clipboard()->setText(
+        QString::fromUtf8(QJsonDocument(copied).toJson(QJsonDocument::Compact)));
+}
+
+void MainWindow::onPasteAddresses() {
+    auto text = QApplication::clipboard()->text().toUtf8();
+    QJsonParseError error{};
+    auto doc = QJsonDocument::fromJson(text, &error);
+    if (error.error != QJsonParseError::NoError)
+        return;
+
+    QJsonArray pasted;
+    if (doc.isArray()) {
+        pasted = doc.array();
+    } else if (doc.isObject()) {
+        pasted = doc.object()["entries"].toArray();
+    }
+    if (pasted.isEmpty())
+        return;
+
+    auto entries = addressListModel_->toJson();
+    for (auto value : pasted) {
+        auto obj = value.toObject();
+        if (obj.isEmpty())
+            continue;
+        obj["active"] = false;
+        entries.append(obj);
+    }
+    addressListModel_->fromJson(entries);
 }
 
 void MainWindow::onFreezeTimer() {

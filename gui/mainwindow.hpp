@@ -38,6 +38,8 @@ private slots:
     void onResultDoubleClicked(const QModelIndex& index);
     void onMemoryView();
     void onDeleteAddresses();
+    void onCopyAddresses();
+    void onPasteAddresses();
     void onSaveTable();
     void onLoadTable();
     void onFreezeTimer();
