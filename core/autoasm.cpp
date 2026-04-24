@@ -376,6 +376,35 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // AOBSCANALL(name, pattern) — find pattern across all readable memory
+    if (startsWith(upper, "AOBSCANALL(") && line.back() == ')' && proc) {
+        auto args = line.substr(11, line.size() - 12);
+        auto parts = splitArgs(args, 2);
+        if (parts.size() == 2) {
+            auto name = trim(parts[0]);
+            auto pattern = stripOptionalQuotes(parts[1]);
+
+            ScanConfig cfg;
+            cfg.valueType = ValueType::ByteArray;
+            cfg.parseAOB(pattern);
+            cfg.alignment = 1;
+
+            MemoryScanner scanner;
+            auto result = scanner.firstScan(*proc, cfg);
+            if (result.count() > 0) {
+                Define d;
+                d.name = name;
+                d.value = formatHex(result.address(0));
+                defines.push_back(d);
+                log.push_back("AOBSCANALL: " + name + " = 0x" + d.value +
+                    " (" + std::to_string(result.count()) + " matches)");
+            } else {
+                log.push_back("AOBSCANALL: " + name + " NOT FOUND");
+            }
+        }
+        return;
+    }
+
     // AOBSCANMODULE(name, module, pattern) — find pattern inside one module
     if (startsWith(upper, "AOBSCANMODULE(") && line.back() == ')' && proc) {
         auto args = line.substr(14, line.size() - 15);

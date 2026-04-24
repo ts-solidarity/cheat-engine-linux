@@ -240,6 +240,21 @@ static void test_autoassembler_aobscanregion(pid_t pid) {
     printf("  aobscanregion: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_aobscanall(pid_t pid) {
+    printf("\n── Test: AutoAssembler aobscanall ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+
+    auto result = aa.execute(proc,
+        "[ENABLE]\n"
+        "aobscanall(sleep_elf_all, 7F 45 4C 46)\n"
+        "registersymbol(sleep_elf_all)\n");
+
+    bool ok = result.success && aa.resolveSymbol("sleep_elf_all") != 0;
+    printf("  aobscanall: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_requires_target(pid_t pid) {
     printf("\n── Test: AutoAssembler requires target ──\n");
 
@@ -436,6 +451,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_ds(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_aobscanregion(targetPid);
+    test_autoassembler_aobscanall(targetPid);
     test_autoassembler_requires_target(targetPid);
     test_breakpoint_conditions();
     test_process_enumeration();
