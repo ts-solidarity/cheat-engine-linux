@@ -26,6 +26,7 @@ struct ScanConfig {
     double      floatTolerance     = 0.0; // For rounded comparison
     bool        percentageScan     = false;
     double      percentageValue    = 0.0;
+    double      percentageValue2   = 0.0; // For percentage "between" comparisons
 
     // Search values (interpretation depends on valueType + compareType)
     int64_t     intValue     = 0;

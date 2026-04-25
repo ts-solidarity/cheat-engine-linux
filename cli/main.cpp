@@ -46,6 +46,8 @@ static void usage() {
         "  --compare <cmp>   exact, greater, less, between, changed,\n"
         "                    unchanged, increased, decreased, unknown\n"
         "  --previous <dir>  Previous scan result directory (for next scan)\n"
+        "  --percent <pct>   Percentage threshold for next-scan compare\n"
+        "  --percent2 <pct>  Upper bound for percentage 'between'\n"
         "  --align <n>       Scan alignment (default: 4)\n"
         "  --writable        Only scan writable memory\n"
         "\n"
@@ -221,6 +223,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
     const char* previousDir = nullptr;
     const char* valueStr = nullptr;
     const char* value2Str = nullptr;
+    const char* percentStr = nullptr;
+    const char* percent2Str = nullptr;
 
     static struct option long_opts[] = {
         {"type",     required_argument, nullptr, 't'},
@@ -228,6 +232,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         {"value2",   required_argument, nullptr, '2'},
         {"compare",  required_argument, nullptr, 'c'},
         {"previous", required_argument, nullptr, 'p'},
+        {"percent",  required_argument, nullptr, 'P'},
+        {"percent2", required_argument, nullptr, 'q'},
         {"align",    required_argument, nullptr, 'a'},
         {"writable", no_argument,       nullptr, 'w'},
         {nullptr, 0, nullptr, 0}
@@ -235,13 +241,15 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
 
     optind = 1; // reset getopt
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:v:2:c:p:a:w", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:v:2:c:p:P:q:a:w", long_opts, nullptr)) != -1) {
         switch (opt) {
             case 't': config.valueType = parseType(optarg); break;
             case 'v': valueStr = optarg; break;
             case '2': value2Str = optarg; break;
             case 'c': config.compareType = parseCompare(optarg); break;
             case 'p': previousDir = optarg; break;
+            case 'P': percentStr = optarg; break;
+            case 'q': percent2Str = optarg; break;
             case 'a': config.alignment = atoi(optarg); break;
             case 'w': config.scanWritableOnly = true; break;
         }
@@ -271,6 +279,12 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
             config.intValue = atoll(valueStr);
             if (value2Str) config.intValue2 = atoll(value2Str);
         }
+    }
+
+    if (percentStr) {
+        config.percentageScan = true;
+        config.percentageValue = atof(percentStr);
+        config.percentageValue2 = percent2Str ? atof(percent2Str) : config.percentageValue;
     }
 
     LinuxProcessHandle proc(pid);

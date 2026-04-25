@@ -794,6 +794,61 @@ static void test_all_types_scan() {
     printf("  vtAll numeric match: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_percentage_scan() {
+    printf("\n── Test: Percentage scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  increased/between by percent: FAILED\n");
+        return;
+    }
+
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* value = reinterpret_cast<int32_t*>(page);
+    *value = 100;
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig first;
+    first.valueType = ValueType::Int32;
+    first.compareType = ScanCompare::Exact;
+    first.intValue = 100;
+    first.alignment = 4;
+    first.startAddress = base;
+    first.stopAddress = base + pageSize;
+
+    auto initial = scanner.firstScan(proc, first);
+    *value = 125;
+
+    ScanConfig increased = first;
+    increased.compareType = ScanCompare::Increased;
+    increased.percentageScan = true;
+    increased.percentageValue = 20.0;
+    auto increasedResult = scanner.nextScan(proc, increased, initial);
+
+    ScanConfig between = increased;
+    between.compareType = ScanCompare::Between;
+    between.percentageValue = 20.0;
+    between.percentageValue2 = 30.0;
+    auto betweenResult = scanner.nextScan(proc, between, initial);
+
+    ScanConfig tooHigh = increased;
+    tooHigh.percentageValue = 30.0;
+    auto tooHighResult = scanner.nextScan(proc, tooHigh, initial);
+
+    bool ok = initial.count() == 1 &&
+        increasedResult.count() == 1 && increasedResult.address(0) == base &&
+        betweenResult.count() == 1 && betweenResult.address(0) == base &&
+        tooHighResult.count() == 0;
+
+    munmap(page, pageSize);
+
+    printf("  increased/between by percent: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -947,6 +1002,7 @@ int main(int argc, char* argv[]) {
     test_binary_scan_bitmask();
     test_unicode_string_scan();
     test_all_types_scan();
+    test_percentage_scan();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

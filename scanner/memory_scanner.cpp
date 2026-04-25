@@ -68,6 +68,42 @@ CompareFn<T> getCompare(ScanCompare cmp) {
     }
 }
 
+bool supportsPercentageCompare(ScanCompare cmp) {
+    switch (cmp) {
+        case ScanCompare::Greater:
+        case ScanCompare::Less:
+        case ScanCompare::Between:
+        case ScanCompare::Increased:
+        case ScanCompare::Decreased:
+            return true;
+        default:
+            return false;
+    }
+}
+
+template<typename T>
+bool comparePercentage(const ScanConfig& config, T current, T old) {
+    double base = std::abs(static_cast<double>(old));
+    if (base == 0.0) return false;
+
+    double deltaPct = ((static_cast<double>(current) - static_cast<double>(old)) / base) * 100.0;
+    switch (config.compareType) {
+        case ScanCompare::Increased:
+        case ScanCompare::Greater:
+            return deltaPct >= config.percentageValue;
+        case ScanCompare::Decreased:
+        case ScanCompare::Less:
+            return deltaPct <= -config.percentageValue;
+        case ScanCompare::Between: {
+            double lo = std::min(config.percentageValue, config.percentageValue2);
+            double hi = std::max(config.percentageValue, config.percentageValue2);
+            return deltaPct >= lo && deltaPct <= hi;
+        }
+        default:
+            return false;
+    }
+}
+
 /// Scan a buffer for matching values of type T.
 template<typename T>
 void scanBuffer(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
@@ -263,6 +299,9 @@ bool compareNextNumeric(const ScanConfig& config, const uint8_t* currentVal, con
     T old{};
     std::memcpy(&cur, currentVal, sizeof(T));
     std::memcpy(&old, oldVal, sizeof(T));
+
+    if (config.percentageScan && supportsPercentageCompare(config.compareType))
+        return comparePercentage(config, cur, old);
 
     auto cmp = getCompare<T>(config.compareType);
     if (config.compareType >= ScanCompare::Changed)

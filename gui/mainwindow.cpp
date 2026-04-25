@@ -31,6 +31,7 @@
 #include <QShortcut>
 #include <QInputDialog>
 #include <QColor>
+#include <QDoubleValidator>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -340,6 +341,34 @@ void MainWindow::setupUi() {
     alignEdit_ = new QLineEdit("4");
     alignEdit_->setFixedWidth(30);
     optLayout->addWidget(alignEdit_, 4, 1);
+
+    percentCheck_ = new QCheckBox("Compare by %");
+    optLayout->addWidget(percentCheck_, 5, 0);
+    percentValueEdit_ = new QLineEdit("10");
+    percentValueEdit_->setFixedWidth(60);
+    percentValueEdit_->setEnabled(false);
+    percentValueEdit_->setValidator(new QDoubleValidator(0.0, 1000000.0, 4, percentValueEdit_));
+    optLayout->addWidget(percentValueEdit_, 5, 1);
+
+    auto* percent2Label = new QLabel("Percent max:");
+    optLayout->addWidget(percent2Label, 6, 0);
+    percentValue2Edit_ = new QLineEdit("20");
+    percentValue2Edit_->setFixedWidth(60);
+    percentValue2Edit_->setEnabled(false);
+    percentValue2Edit_->setValidator(new QDoubleValidator(0.0, 1000000.0, 4, percentValue2Edit_));
+    optLayout->addWidget(percentValue2Edit_, 6, 1);
+
+    auto updatePercentUi = [this, percent2Label]() {
+        bool enabled = percentCheck_->isChecked();
+        bool needsUpper = enabled && mapScanType(scanTypeCombo_->currentIndex()) == ScanCompare::Between;
+        percentValueEdit_->setEnabled(enabled);
+        percent2Label->setEnabled(needsUpper);
+        percentValue2Edit_->setEnabled(needsUpper);
+    };
+    connect(percentCheck_, &QCheckBox::toggled, this, [updatePercentUi](bool) { updatePercentUi(); });
+    connect(scanTypeCombo_, &QComboBox::currentIndexChanged, this,
+        [updatePercentUi](int) { updatePercentUi(); });
+    updatePercentUi();
     rightLayout->addWidget(optGroup);
 
     progressBar_ = new QProgressBar;
@@ -567,6 +596,15 @@ void MainWindow::onNextScan() {
         config.floatValue = text.toDouble();
     } else {
         config.intValue = text.toLongLong();
+    }
+
+    if (percentCheck_->isChecked()) {
+        config.percentageScan = true;
+        config.percentageValue = percentValueEdit_->text().toDouble();
+        auto percent2Text = percentValue2Edit_->text().trimmed();
+        config.percentageValue2 = percent2Text.isEmpty()
+            ? config.percentageValue
+            : percent2Text.toDouble();
     }
 
     nextScanBtn_->setEnabled(false);

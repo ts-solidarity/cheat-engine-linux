@@ -83,7 +83,10 @@ private:
     QCheckBox* writableCheck_;
     QCheckBox* executableCheck_;
     QCheckBox* fastScanCheck_;
+    QCheckBox* percentCheck_;
     QLineEdit* alignEdit_;
+    QLineEdit* percentValueEdit_;
+    QLineEdit* percentValue2Edit_;
 
     // Results
     QTableView* resultsView_;
