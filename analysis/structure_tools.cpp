@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <sstream>
 
 namespace ce {
@@ -111,6 +112,38 @@ std::string generateCppStruct(const StructureDefinition& structure) {
 
     out << "};\n";
     return out.str();
+}
+
+std::vector<StructureFieldDiff> compareStructureSnapshots(const StructureDefinition& structure,
+    const std::vector<uint8_t>& before,
+    const std::vector<uint8_t>& after)
+{
+    std::vector<StructureFieldDiff> diffs;
+    for (const auto& field : structure.fields) {
+        const size_t fieldSize = defaultSizeFor(field.type, field.size);
+        if (fieldSize == 0 || field.offset >= before.size() || field.offset >= after.size())
+            continue;
+
+        const size_t beforeSize = std::min(fieldSize, before.size() - field.offset);
+        const size_t afterSize = std::min(fieldSize, after.size() - field.offset);
+        const size_t compareSize = std::min(beforeSize, afterSize);
+        if (compareSize == 0)
+            continue;
+
+        StructureFieldDiff diff;
+        diff.name = field.name;
+        diff.offset = field.offset;
+        diff.size = compareSize;
+        auto beforeStart = before.begin() + static_cast<std::vector<uint8_t>::difference_type>(field.offset);
+        auto afterStart = after.begin() + static_cast<std::vector<uint8_t>::difference_type>(field.offset);
+        diff.before.assign(beforeStart,
+            beforeStart + static_cast<std::vector<uint8_t>::difference_type>(compareSize));
+        diff.after.assign(afterStart,
+            afterStart + static_cast<std::vector<uint8_t>::difference_type>(compareSize));
+        diff.changed = std::memcmp(diff.before.data(), diff.after.data(), compareSize) != 0;
+        diffs.push_back(std::move(diff));
+    }
+    return diffs;
 }
 
 } // namespace ce

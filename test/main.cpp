@@ -291,8 +291,24 @@ static void test_structure_tools() {
         cpp.find("uint8_t _pad0[0x8];") != std::string::npos &&
         cpp.find("uintptr_t target; // 0x10") != std::string::npos;
 
+    std::vector<uint8_t> before(24, 0);
+    std::vector<uint8_t> after = before;
+    int32_t oldHealth = 100;
+    int32_t newHealth = 75;
+    float mana = 12.5f;
+    std::memcpy(before.data(), &oldHealth, sizeof(oldHealth));
+    std::memcpy(after.data(), &newHealth, sizeof(newHealth));
+    std::memcpy(before.data() + 4, &mana, sizeof(mana));
+    std::memcpy(after.data() + 4, &mana, sizeof(mana));
+    auto diffs = compareStructureSnapshots(structure, before, after);
+    bool diffOk = diffs.size() == 3 &&
+        diffs[0].name == "health" && diffs[0].changed &&
+        diffs[1].name == "mana value" && !diffs[1].changed &&
+        diffs[2].name == "target" && !diffs[2].changed;
+
     printf("  template save/load: %s\n", (saveOk && loadOk) ? "OK" : "FAILED");
     printf("  C++ struct export: %s\n", cppOk ? "OK" : "FAILED");
+    printf("  snapshot comparison: %s\n", diffOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {

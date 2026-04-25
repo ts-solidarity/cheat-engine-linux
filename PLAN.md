@@ -163,7 +163,7 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 
 **2.3 Advanced Structure Dissector**
 - [ ] Nested structures (struct within struct)
-- [ ] Structure comparison (diff two snapshots)
+- [x] Structure comparison (diff two snapshots)
 - [ ] Auto-detect fields by comparing changed/unchanged regions
 - [ ] Pointer chain following in structures
 - [ ] Custom display methods per field
@@ -191,6 +191,8 @@ Note: heap enumeration is implemented as a Linux Heap Regions window over `/proc
 Note: Lua utility bindings now include `messageDialog` modal-result constants and a headless `getScreenCanvas` canvas object with basic drawing/text methods for script compatibility.
 
 Note: structure definitions now have reusable template save/load helpers and C/C++ struct export with padding, backed by regression tests.
+
+Note: structure snapshot comparison now reports per-field before/after bytes and changed status for dissected structure definitions.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 
