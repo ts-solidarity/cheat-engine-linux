@@ -107,6 +107,13 @@ static void test_cheat_table_json() {
     entry.hotkeyKeys = "Ctrl+H";
     table.entries.push_back(entry);
 
+    StructureDefinition structure;
+    structure.name = "Player";
+    structure.size = 16;
+    structure.fields.push_back({"health", 0, ValueType::Int32, 4});
+    structure.fields.push_back({"mana", 4, ValueType::Float, 4});
+    table.structures.push_back(structure);
+
     auto jsonPath = std::filesystem::temp_directory_path() /
         ("cecore-table-" + std::to_string(getpid()) + ".json");
     auto xmlPath = std::filesystem::temp_directory_path() /
@@ -123,6 +130,16 @@ static void test_cheat_table_json() {
             loaded.author == table.author &&
             loaded.comment == table.comment &&
             loaded.luaScript == table.luaScript &&
+            loaded.structures.size() == 1 &&
+            loaded.structures[0].name == "Player" &&
+            loaded.structures[0].size == 16 &&
+            loaded.structures[0].fields.size() == 2 &&
+            loaded.structures[0].fields[0].name == "health" &&
+            loaded.structures[0].fields[0].offset == 0 &&
+            loaded.structures[0].fields[0].type == ValueType::Int32 &&
+            loaded.structures[0].fields[1].name == "mana" &&
+            loaded.structures[0].fields[1].offset == 4 &&
+            loaded.structures[0].fields[1].type == ValueType::Float &&
             loaded.entries.size() == 1 &&
             loaded.entries[0].id == entry.id &&
             loaded.entries[0].description == entry.description &&

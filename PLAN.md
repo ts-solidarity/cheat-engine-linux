@@ -100,11 +100,13 @@ Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field of
 - [ ] XML-based save/load (matching CE's format for compatibility)
 - [x] Embedded Lua scripts in table
 - [x] Embedded auto-assembler scripts
-- [ ] Structure definitions in table
+- [x] Structure definitions in table
 - [x] Table metadata (game name, version, author)
 - [ ] Table encryption/protection for .CETRAINER format
 
 Note: active auto-assembler records loaded from a table now run their enable script when a process is open; otherwise they are loaded inactive with a warning.
+
+Note: cheat tables now persist named structure definitions and fields through both native JSON and `.CT` XML round trips.
 
 Note: percentage comparisons are implemented for next scans, with CLI `--percent`/`--percent2` options and GUI next-scan controls.
 
@@ -121,6 +123,8 @@ Note: custom Lua formula scans (`soCustom`) are implemented with per-result Lua 
 Note: grouped/custom scan results preserve their dynamic value sizes in the GUI result table and undo flow.
 
 Note: codepage-aware string scans use `iconv` to convert UTF-8 search text into a selected single-byte target encoding, exposed through CLI `--encoding`, GUI text encoding choices, and Lua optional scan arguments.
+
+Note: scan ranges now clip overlapping memory regions to the requested start/stop bounds instead of skipping regions whose mapping starts before the scan start; this stabilizes self-scan tests when Linux merges adjacent anonymous mappings.
 
 Note: the Stack Trace window now attaches to the selected thread, preserves the raw stack dump, and adds a frame-pointer call chain with symbol resolution plus a regression test for frame walking.
 

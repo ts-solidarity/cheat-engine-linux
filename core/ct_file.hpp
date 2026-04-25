@@ -25,6 +25,19 @@ struct CheatEntry {
     std::string hotkeyKeys;     // Hotkey binding
 };
 
+struct StructureField {
+    std::string name;
+    size_t offset = 0;
+    ValueType type = ValueType::Int32;
+    size_t size = 4;
+};
+
+struct StructureDefinition {
+    std::string name;
+    size_t size = 0;
+    std::vector<StructureField> fields;
+};
+
 struct CheatTable {
     std::string gameName;
     std::string gameVersion;
@@ -32,6 +45,7 @@ struct CheatTable {
     std::string comment;
     std::string luaScript;      // Table-level Lua script
     std::vector<CheatEntry> entries;
+    std::vector<StructureDefinition> structures;
 
     /// Save to .CT XML file.
     bool save(const std::string& path) const;

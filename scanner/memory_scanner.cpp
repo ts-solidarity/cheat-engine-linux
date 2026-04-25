@@ -1029,12 +1029,21 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
     for (auto& r : regions) {
         if (r.state != MemState::Committed) continue;
         if (!(r.protection & MemProt::Read)) continue;
-        if (r.base < config.startAddress) continue;
-        if (r.base >= config.stopAddress) continue;
         if (config.scanWritableOnly && !(r.protection & MemProt::Write)) continue;
         if (config.scanExecutableOnly && !(r.protection & MemProt::Exec)) continue;
         if (!memoryTypeAllowed(config, r.type)) continue;
-        scanRegions.push_back(r);
+
+        uintptr_t regionEnd = std::numeric_limits<uintptr_t>::max() - r.base < r.size
+            ? std::numeric_limits<uintptr_t>::max()
+            : r.base + r.size;
+        uintptr_t scanStart = std::max(r.base, config.startAddress);
+        uintptr_t scanEnd = std::min(regionEnd, config.stopAddress);
+        if (scanEnd <= scanStart) continue;
+
+        MemoryRegion clipped = r;
+        clipped.base = scanStart;
+        clipped.size = scanEnd - scanStart;
+        scanRegions.push_back(clipped);
     }
 
     auto resultDir = makeScanDir();

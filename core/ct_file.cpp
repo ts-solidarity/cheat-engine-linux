@@ -80,6 +80,27 @@ bool CheatTable::save(const std::string& path) const {
         f << "  <LuaScript>" << xmlEscape(luaScript) << "</LuaScript>\n";
     }
 
+    if (!structures.empty()) {
+        f << "  <Structures>\n";
+        for (const auto& s : structures) {
+            f << "    <Structure>\n";
+            f << "      <Name>" << xmlEscape(s.name) << "</Name>\n";
+            f << "      <Size>" << s.size << "</Size>\n";
+            f << "      <Elements>\n";
+            for (const auto& field : s.fields) {
+                f << "        <Element>\n";
+                f << "          <Name>" << xmlEscape(field.name) << "</Name>\n";
+                f << "          <Offset>" << field.offset << "</Offset>\n";
+                f << "          <Type>" << typeToStr(field.type) << "</Type>\n";
+                f << "          <Size>" << field.size << "</Size>\n";
+                f << "        </Element>\n";
+            }
+            f << "      </Elements>\n";
+            f << "    </Structure>\n";
+        }
+        f << "  </Structures>\n";
+    }
+
     f << "  <CheatEntries>\n";
     for (auto& e : entries) {
         f << "    <CheatEntry>\n";
@@ -135,6 +156,22 @@ static std::string getTag(const std::string& xml, const std::string& tag) {
     auto end = xml.find(closeTag, start);
     if (end == std::string::npos) return "";
     return xml.substr(start, end - start);
+}
+
+static std::vector<std::string> getTagBlocks(const std::string& xml, const std::string& tag) {
+    std::vector<std::string> blocks;
+    auto openTag = "<" + tag + ">";
+    auto closeTag = "</" + tag + ">";
+    size_t pos = 0;
+    while (true) {
+        auto start = xml.find(openTag, pos);
+        if (start == std::string::npos) break;
+        auto end = xml.find(closeTag, start);
+        if (end == std::string::npos) break;
+        blocks.push_back(xml.substr(start, end - start + closeTag.size()));
+        pos = end + closeTag.size();
+    }
+    return blocks;
 }
 
 static std::string xmlUnescape(const std::string& s) {
@@ -365,6 +402,16 @@ static int jsonIntField(const JsonValue& obj, const std::string& key, int defaul
     return defaultValue;
 }
 
+static size_t jsonSizeField(const JsonValue& obj, const std::string& key, size_t defaultValue = 0) {
+    auto* v = getField(obj, key);
+    if (!v) return defaultValue;
+    if (v->type == JsonValue::Type::Number) return static_cast<size_t>(v->numberValue);
+    if (v->type == JsonValue::Type::String) {
+        try { return static_cast<size_t>(std::stoull(v->stringValue, nullptr, 0)); } catch (...) {}
+    }
+    return defaultValue;
+}
+
 static uintptr_t jsonAddressField(const JsonValue& obj, const std::string& key) {
     auto* v = getField(obj, key);
     if (!v) return 0;
@@ -409,6 +456,36 @@ bool CheatTable::load(const std::string& path) {
     author = xmlUnescape(getTag(headerXml, "Author"));
     comment = xmlUnescape(getTag(headerXml, "Comment"));
     luaScript = xmlUnescape(getTag(headerXml, "LuaScript"));
+
+    structures.clear();
+    auto structuresXml = getTag(xml, "Structures");
+    for (const auto& structureXml : getTagBlocks(structuresXml, "Structure")) {
+        StructureDefinition structure;
+        structure.name = xmlUnescape(getTag(structureXml, "Name"));
+        auto sizeStr = getTag(structureXml, "Size");
+        if (!sizeStr.empty()) {
+            try { structure.size = std::stoull(sizeStr, nullptr, 0); } catch (...) {}
+        }
+
+        auto elementsXml = getTag(structureXml, "Elements");
+        for (const auto& elementXml : getTagBlocks(elementsXml, "Element")) {
+            StructureField field;
+            field.name = xmlUnescape(getTag(elementXml, "Name"));
+            auto offsetStr = getTag(elementXml, "Offset");
+            auto fieldSizeStr = getTag(elementXml, "Size");
+            if (!offsetStr.empty()) {
+                try { field.offset = std::stoull(offsetStr, nullptr, 0); } catch (...) {}
+            }
+            if (!fieldSizeStr.empty()) {
+                try { field.size = std::stoull(fieldSizeStr, nullptr, 0); } catch (...) {}
+            }
+            field.type = strToType(getTag(elementXml, "Type"));
+            structure.fields.push_back(std::move(field));
+        }
+
+        if (!structure.name.empty() || !structure.fields.empty())
+            structures.push_back(std::move(structure));
+    }
 
     // Parse CheatEntries
     entries.clear();
@@ -463,6 +540,23 @@ bool CheatTable::saveJson(const std::string& path) const {
     f << "  \"author\": \"" << jsonEscape(author) << "\",\n";
     f << "  \"comment\": \"" << jsonEscape(comment) << "\",\n";
     f << "  \"luaScript\": \"" << jsonEscape(luaScript) << "\",\n";
+    f << "  \"structures\": [\n";
+    for (size_t i = 0; i < structures.size(); ++i) {
+        const auto& s = structures[i];
+        f << "    {\"name\":\"" << jsonEscape(s.name) << "\",\"size\":" << s.size << ",\"fields\":[";
+        for (size_t fieldIndex = 0; fieldIndex < s.fields.size(); ++fieldIndex) {
+            const auto& field = s.fields[fieldIndex];
+            f << "{\"name\":\"" << jsonEscape(field.name) << "\"";
+            f << ",\"offset\":" << field.offset;
+            f << ",\"type\":" << (int)field.type;
+            f << ",\"size\":" << field.size << "}";
+            if (fieldIndex + 1 < s.fields.size()) f << ",";
+        }
+        f << "]}";
+        if (i + 1 < structures.size()) f << ",";
+        f << "\n";
+    }
+    f << "  ],\n";
     f << "  \"entries\": [\n";
     for (size_t i = 0; i < entries.size(); ++i) {
         auto& e = entries[i];
@@ -505,6 +599,33 @@ bool CheatTable::loadJson(const std::string& path) {
     author = jsonStringField(root, "author");
     comment = jsonStringField(root, "comment");
     luaScript = jsonStringField(root, "luaScript");
+
+    structures.clear();
+    auto* structuresValue = getField(root, "structures");
+    if (structuresValue && structuresValue->type == JsonValue::Type::Array) {
+        for (const auto& item : structuresValue->arrayValue) {
+            if (item.type != JsonValue::Type::Object) continue;
+
+            StructureDefinition structure;
+            structure.name = jsonStringField(item, "name");
+            structure.size = jsonSizeField(item, "size");
+
+            auto* fieldsValue = getField(item, "fields");
+            if (fieldsValue && fieldsValue->type == JsonValue::Type::Array) {
+                for (const auto& fieldItem : fieldsValue->arrayValue) {
+                    if (fieldItem.type != JsonValue::Type::Object) continue;
+                    StructureField field;
+                    field.name = jsonStringField(fieldItem, "name");
+                    field.offset = jsonSizeField(fieldItem, "offset");
+                    field.type = jsonValueTypeField(fieldItem);
+                    field.size = jsonSizeField(fieldItem, "size", 4);
+                    structure.fields.push_back(std::move(field));
+                }
+            }
+
+            structures.push_back(std::move(structure));
+        }
+    }
 
     entries.clear();
     auto* entriesValue = getField(root, "entries");
