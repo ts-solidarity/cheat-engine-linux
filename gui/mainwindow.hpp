@@ -138,6 +138,7 @@ struct AddressEntry {
     ce::DisableInfo autoAsmDisableInfo;
     QString color;            // Hex color for display
     QString dropdownList;     // "value:label;value:label" choices
+    QString hotkeyKeys;       // Portable key sequence string
     int indent = 0;           // Nesting level (0 = root, 1 = child, etc.)
     bool isGroup = false;     // Group header (no address, just a label)
 };
@@ -153,6 +154,7 @@ public:
     void indentRows(QList<int> rows);
     void outdentRows(QList<int> rows);
     void setFreezeMode(int row, ce::FreezeMode mode);
+    void setHotkeyKeys(int row, const QString& keys);
     const std::vector<AddressEntry>& entries() const { return entries_; }
     void setProcess(ce::ProcessHandle* proc) { proc_ = proc; }
     void setAutoAssembler(ce::AutoAssembler* autoAsm) { autoAsm_ = autoAsm; }

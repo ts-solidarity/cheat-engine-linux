@@ -184,7 +184,7 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [x] Heap enumeration window
 - [x] DLL/module list window
 - [x] Settings dialog (all scan/debugger/display preferences)
-- [ ] Hotkey configuration dialog
+- [x] Hotkey configuration dialog
 - [x] Find dialog (Ctrl+F in hex view and disassembler)
 - [x] Goto address dialog (Ctrl+G)
 
@@ -211,6 +211,8 @@ Note: Lua table/address-list bindings now include a headless address-list store 
 Note: Lua debug bindings now expose headless breakpoint metadata state for set/remove/continue/list/isDebugging/isBroken; actual ptrace stop/resume behavior remains in the native debugger/session layer.
 
 Note: Lua thread helpers now expose `createThread`, `synchronize`, and `queue` as main-state compatibility APIs with suspended/resumed thread objects, termination state, wait status, names, and callback error tracking.
+
+Note: the address-list context menu now includes a hotkey configuration dialog backed by `QKeySequenceEdit`; configured keys are preserved in address-list JSON and .CT save/load conversion.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

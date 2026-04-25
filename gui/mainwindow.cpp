@@ -26,6 +26,11 @@
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QKeySequenceEdit>
+#include <QPushButton>
 #include <QTimer>
 #include <QFont>
 #include <QMenu>
@@ -495,6 +500,34 @@ void MainWindow::setupUi() {
                 if (!selected.isEmpty())
                     startCodeFinder(selected.first().row(), true);
             });
+            if (selected.size() == 1) {
+                menu.addSeparator();
+                menu.addAction("Configure Hotkey...", [this, selected]() {
+                    int row = selected.first().row();
+                    const auto& entries = addressListModel_->entries();
+                    if (row < 0 || row >= (int)entries.size()) return;
+
+                    QDialog dialog(this);
+                    dialog.setWindowTitle("Configure Hotkey");
+                    auto* layout = new QVBoxLayout(&dialog);
+                    auto* label = new QLabel(entries[row].description, &dialog);
+                    auto* editor = new QKeySequenceEdit(QKeySequence(entries[row].hotkeyKeys), &dialog);
+                    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+                    auto* clearButton = buttons->addButton("Clear", QDialogButtonBox::ResetRole);
+
+                    layout->addWidget(label);
+                    layout->addWidget(editor);
+                    layout->addWidget(buttons);
+                    connect(clearButton, &QPushButton::clicked, editor, &QKeySequenceEdit::clear);
+                    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+                    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+                    if (dialog.exec() == QDialog::Accepted) {
+                        addressListModel_->setHotkeyKeys(row,
+                            editor->keySequence().toString(QKeySequence::PortableText));
+                    }
+                });
+            }
         }
 
         menu.addSeparator();
@@ -870,6 +903,7 @@ void MainWindow::onSaveTable() {
             e.autoAsmScript = obj["asm"].toString().toStdString();
             e.color = obj["color"].toString().toStdString();
             e.dropdownList = obj["dropdown"].toString().toStdString();
+            e.hotkeyKeys = obj["hotkeys"].toString().toStdString();
             e.isGroup = obj["group"].toBool();
             e.parentId = obj["parent"].toInt(-1);
             table.entries.push_back(e);
@@ -906,6 +940,7 @@ void MainWindow::onLoadTable() {
             obj["asm"] = QString::fromStdString(e.autoAsmScript);
             obj["color"] = QString::fromStdString(e.color);
             obj["dropdown"] = QString::fromStdString(e.dropdownList);
+            obj["hotkeys"] = QString::fromStdString(e.hotkeyKeys);
             obj["group"] = e.isGroup;
             obj["parent"] = e.parentId;
             arr.append(obj);
@@ -1323,6 +1358,7 @@ QJsonArray AddressListModel::toJson() const {
         obj["asm"] = e.autoAsmScript;
         obj["color"] = e.color;
         obj["dropdown"] = e.dropdownList;
+        obj["hotkeys"] = e.hotkeyKeys;
         obj["indent"] = e.indent;
         obj["group"] = e.isGroup;
         if (e.indent > 0 && e.indent - 1 < (int)lastRowAtIndent.size())
@@ -1353,6 +1389,7 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
         e.autoAsmScript = obj["asm"].toString();
         e.color = obj["color"].toString();
         e.dropdownList = obj["dropdown"].toString();
+        e.hotkeyKeys = obj["hotkeys"].toString();
         e.indent = std::max(0, obj.contains("indent")
             ? obj["indent"].toInt()
             : (obj["parent"].toInt(-1) >= 0 && obj["parent"].toInt(-1) < (int)parentIndentById.size()
@@ -1374,6 +1411,12 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
 void AddressListModel::setFreezeMode(int row, FreezeMode mode) {
     if (row < 0 || row >= (int)entries_.size()) return;
     entries_[row].freezeMode = mode;
+    emit dataChanged(index(row, 0), index(row, columnCount() - 1));
+}
+
+void AddressListModel::setHotkeyKeys(int row, const QString& keys) {
+    if (row < 0 || row >= (int)entries_.size()) return;
+    entries_[row].hotkeyKeys = keys;
     emit dataChanged(index(row, 0), index(row, columnCount() - 1));
 }
 
