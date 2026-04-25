@@ -162,7 +162,7 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [x] Assembly scan — find specific instruction patterns
 
 **2.3 Advanced Structure Dissector**
-- [ ] Nested structures (struct within struct)
+- [x] Nested structures (struct within struct)
 - [x] Structure comparison (diff two snapshots)
 - [x] Auto-detect fields by comparing changed/unchanged regions
 - [x] Pointer chain following in structures
@@ -197,6 +197,8 @@ Note: structure snapshot comparison now reports per-field before/after bytes and
 Note: structure tooling now auto-detects changed/unchanged field runs from snapshots and follows pointer fields into readable pointer chains through the process API.
 
 Note: structure fields now persist optional display methods and can format snapshot values as hex bytes, signed/unsigned integers, floats, or pointers.
+
+Note: structure fields now support nested structure references, persisted through JSON/`.CT` templates and emitted as nested field types in C/C++ struct export.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

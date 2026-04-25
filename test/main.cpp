@@ -114,6 +114,8 @@ static void test_cheat_table_json() {
     structure.fields.push_back({"health", 0, ValueType::Int32, 4});
     structure.fields.push_back({"mana", 4, ValueType::Float, 4});
     structure.fields[0].displayMethod = "unsigned";
+    structure.fields.push_back({"position", 8, ValueType::ByteArray, 8});
+    structure.fields[2].nestedStructure = "Vector2";
     table.structures.push_back(structure);
 
     auto jsonPath = std::filesystem::temp_directory_path() /
@@ -135,7 +137,7 @@ static void test_cheat_table_json() {
             loaded.structures.size() == 1 &&
             loaded.structures[0].name == "Player" &&
             loaded.structures[0].size == 16 &&
-            loaded.structures[0].fields.size() == 2 &&
+            loaded.structures[0].fields.size() == 3 &&
             loaded.structures[0].fields[0].name == "health" &&
             loaded.structures[0].fields[0].offset == 0 &&
             loaded.structures[0].fields[0].type == ValueType::Int32 &&
@@ -143,6 +145,8 @@ static void test_cheat_table_json() {
             loaded.structures[0].fields[1].name == "mana" &&
             loaded.structures[0].fields[1].offset == 4 &&
             loaded.structures[0].fields[1].type == ValueType::Float &&
+            loaded.structures[0].fields[2].name == "position" &&
+            loaded.structures[0].fields[2].nestedStructure == "Vector2" &&
             loaded.entries.size() == 1 &&
             loaded.entries[0].id == entry.id &&
             loaded.entries[0].description == entry.description &&
@@ -273,8 +277,10 @@ static void test_structure_tools() {
     structure.fields.push_back({"health", 0, ValueType::Int32, 4});
     structure.fields.push_back({"mana value", 4, ValueType::Float, 4});
     structure.fields.push_back({"target", 16, ValueType::Pointer, sizeof(uintptr_t)});
+    structure.fields.push_back({"coords", 8, ValueType::ByteArray, 8});
     structure.fields[0].displayMethod = "hex";
     structure.fields[1].displayMethod = "float";
+    structure.fields[3].nestedStructure = "Vector2";
 
     auto path = std::filesystem::temp_directory_path() /
         ("cecore-structure-" + std::to_string(getpid()) + ".json");
@@ -289,11 +295,12 @@ static void test_structure_tools() {
         loaded->fields.size() == structure.fields.size() &&
         loaded->fields[1].name == "mana value" &&
         loaded->fields[0].displayMethod == "hex" &&
-        loaded->fields[2].type == ValueType::Pointer;
+        loaded->fields[2].type == ValueType::Pointer &&
+        loaded->fields[3].nestedStructure == "Vector2";
     bool cppOk = cpp.find("struct Player_State") != std::string::npos &&
         cpp.find("int32_t health; // 0x0") != std::string::npos &&
         cpp.find("float mana_value; // 0x4") != std::string::npos &&
-        cpp.find("uint8_t _pad0[0x8];") != std::string::npos &&
+        cpp.find("Vector2 coords; // 0x8") != std::string::npos &&
         cpp.find("uintptr_t target; // 0x10") != std::string::npos;
 
     std::vector<uint8_t> before(24, 0);
@@ -306,10 +313,16 @@ static void test_structure_tools() {
     std::memcpy(before.data() + 4, &mana, sizeof(mana));
     std::memcpy(after.data() + 4, &mana, sizeof(mana));
     auto diffs = compareStructureSnapshots(structure, before, after);
-    bool diffOk = diffs.size() == 3 &&
-        diffs[0].name == "health" && diffs[0].changed &&
-        diffs[1].name == "mana value" && !diffs[1].changed &&
-        diffs[2].name == "target" && !diffs[2].changed;
+    auto hasDiff = [&](const std::string& name, bool changed) {
+        return std::any_of(diffs.begin(), diffs.end(), [&](const StructureFieldDiff& diff) {
+            return diff.name == name && diff.changed == changed;
+        });
+    };
+    bool diffOk = diffs.size() == 4 &&
+        hasDiff("health", true) &&
+        hasDiff("mana value", false) &&
+        hasDiff("target", false) &&
+        hasDiff("coords", false);
 
     auto detected = autoDetectStructureFields(before, after);
     bool detectOk = detected.size() == 2 &&

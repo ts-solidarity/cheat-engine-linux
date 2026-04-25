@@ -95,6 +95,8 @@ bool CheatTable::save(const std::string& path) const {
                 f << "          <Size>" << field.size << "</Size>\n";
                 if (!field.displayMethod.empty())
                     f << "          <DisplayMethod>" << xmlEscape(field.displayMethod) << "</DisplayMethod>\n";
+                if (!field.nestedStructure.empty())
+                    f << "          <NestedStructure>" << xmlEscape(field.nestedStructure) << "</NestedStructure>\n";
                 f << "        </Element>\n";
             }
             f << "      </Elements>\n";
@@ -483,6 +485,7 @@ bool CheatTable::load(const std::string& path) {
             }
             field.type = strToType(getTag(elementXml, "Type"));
             field.displayMethod = xmlUnescape(getTag(elementXml, "DisplayMethod"));
+            field.nestedStructure = xmlUnescape(getTag(elementXml, "NestedStructure"));
             structure.fields.push_back(std::move(field));
         }
 
@@ -555,6 +558,8 @@ bool CheatTable::saveJson(const std::string& path) const {
             f << ",\"size\":" << field.size;
             if (!field.displayMethod.empty())
                 f << ",\"display\":\"" << jsonEscape(field.displayMethod) << "\"";
+            if (!field.nestedStructure.empty())
+                f << ",\"nested\":\"" << jsonEscape(field.nestedStructure) << "\"";
             f << "}";
             if (fieldIndex + 1 < s.fields.size()) f << ",";
         }
@@ -626,6 +631,7 @@ bool CheatTable::loadJson(const std::string& path) {
                     field.type = jsonValueTypeField(fieldItem);
                     field.size = jsonSizeField(fieldItem, "size", 4);
                     field.displayMethod = jsonStringField(fieldItem, "display");
+                    field.nestedStructure = jsonStringField(fieldItem, "nested");
                     structure.fields.push_back(std::move(field));
                 }
             }

@@ -31,6 +31,7 @@ struct StructureField {
     ValueType type = ValueType::Int32;
     size_t size = 4;
     std::string displayMethod;
+    std::string nestedStructure;
 };
 
 struct StructureDefinition {

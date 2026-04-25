@@ -125,7 +125,9 @@ std::string generateCppStruct(const StructureDefinition& structure) {
             cursor = field.offset;
         }
 
-        const auto type = cppTypeFor(field.type, fieldSize);
+        const auto type = field.nestedStructure.empty()
+            ? cppTypeFor(field.type, fieldSize)
+            : sanitizeIdentifier(field.nestedStructure, "NestedStruct");
         const auto name = sanitizeIdentifier(field.name, "field_" + std::to_string(field.offset));
         auto arrayStart = type.find('[');
         if (arrayStart == std::string::npos) {
