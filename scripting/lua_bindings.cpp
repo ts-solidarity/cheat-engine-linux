@@ -1429,6 +1429,181 @@ static int l_setHotkeyAction(lua_State* L) {
     return 0;
 }
 
+// ── Thread helpers ──
+
+struct LuaThread {
+    int callbackRef = LUA_NOREF;
+    bool finished = false;
+    bool terminated = false;
+    bool suspended = false;
+    std::string name;
+    std::string lastError;
+};
+
+static LuaThread* checkThread(lua_State* L, int index) {
+    return static_cast<LuaThread*>(luaL_checkudata(L, index, "CEThread"));
+}
+
+static bool runThreadCallback(lua_State* L, LuaThread* thread) {
+    if (thread->terminated || thread->finished || thread->callbackRef == LUA_NOREF)
+        return true;
+
+    thread->suspended = false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, thread->callbackRef);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char* err = lua_tostring(L, -1);
+        thread->lastError = err ? err : "thread callback failed";
+        lua_pop(L, 1);
+        thread->finished = true;
+        return false;
+    }
+    thread->finished = true;
+    return true;
+}
+
+static int l_thread_gc(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    if (thread->callbackRef != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, thread->callbackRef);
+        thread->callbackRef = LUA_NOREF;
+    }
+    thread->~LuaThread();
+    return 0;
+}
+
+static int l_thread_waitfor(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    lua_pushboolean(L, thread->finished);
+    return 1;
+}
+
+static int l_thread_terminate(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    thread->terminated = true;
+    thread->finished = true;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_thread_suspend(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    if (!thread->finished)
+        thread->suspended = true;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_thread_resume(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    bool ok = runThreadCallback(L, thread);
+    lua_pushboolean(L, ok);
+    if (!ok) {
+        lua_pushstring(L, thread->lastError.c_str());
+        return 2;
+    }
+    return 1;
+}
+
+static int l_thread_index(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    const char* key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "Finished") == 0 || std::strcmp(key, "finished") == 0) {
+        lua_pushboolean(L, thread->finished);
+        return 1;
+    }
+    if (std::strcmp(key, "Terminated") == 0 || std::strcmp(key, "terminated") == 0) {
+        lua_pushboolean(L, thread->terminated);
+        return 1;
+    }
+    if (std::strcmp(key, "Suspended") == 0 || std::strcmp(key, "suspended") == 0) {
+        lua_pushboolean(L, thread->suspended);
+        return 1;
+    }
+    if (std::strcmp(key, "Name") == 0 || std::strcmp(key, "name") == 0) {
+        lua_pushstring(L, thread->name.c_str());
+        return 1;
+    }
+    if (std::strcmp(key, "LastError") == 0 || std::strcmp(key, "lastError") == 0) {
+        lua_pushstring(L, thread->lastError.c_str());
+        return 1;
+    }
+    if (std::strcmp(key, "waitfor") == 0 || std::strcmp(key, "waitFor") == 0) {
+        lua_pushcfunction(L, l_thread_waitfor);
+        return 1;
+    }
+    if (std::strcmp(key, "terminate") == 0 || std::strcmp(key, "Terminate") == 0) {
+        lua_pushcfunction(L, l_thread_terminate);
+        return 1;
+    }
+    if (std::strcmp(key, "suspend") == 0 || std::strcmp(key, "Suspend") == 0) {
+        lua_pushcfunction(L, l_thread_suspend);
+        return 1;
+    }
+    if (std::strcmp(key, "resume") == 0 || std::strcmp(key, "Resume") == 0) {
+        lua_pushcfunction(L, l_thread_resume);
+        return 1;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int l_thread_newindex(lua_State* L) {
+    auto* thread = checkThread(L, 1);
+    const char* key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "Name") == 0 || std::strcmp(key, "name") == 0)
+        thread->name = luaL_checkstring(L, 3);
+    return 0;
+}
+
+static void ensureThreadMetatable(lua_State* L) {
+    if (luaL_newmetatable(L, "CEThread")) {
+        lua_pushcfunction(L, l_thread_gc);
+        lua_setfield(L, -2, "__gc");
+        lua_pushcfunction(L, l_thread_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, l_thread_newindex);
+        lua_setfield(L, -2, "__newindex");
+    }
+    lua_pop(L, 1);
+}
+
+static int l_createThread(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    ensureThreadMetatable(L);
+
+    bool suspended = lua_toboolean(L, 2) != 0;
+    auto* thread = static_cast<LuaThread*>(lua_newuserdata(L, sizeof(LuaThread)));
+    new (thread) LuaThread();
+    thread->suspended = suspended;
+    lua_pushvalue(L, 1);
+    thread->callbackRef = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    luaL_getmetatable(L, "CEThread");
+    lua_setmetatable(L, -2);
+
+    if (!suspended)
+        runThreadCallback(L, thread);
+    return 1;
+}
+
+static int l_synchronize(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    int base = lua_gettop(L);
+    lua_pushvalue(L, 1);
+    if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK)
+        return lua_error(L);
+    return lua_gettop(L) - base;
+}
+
+static int l_queue(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    lua_pushvalue(L, 1);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK)
+        return lua_error(L);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 // ── Constants registration ──
 
 static void registerConstants(lua_State* L) {
@@ -1610,6 +1785,11 @@ void registerExtendedBindings(lua_State* L) {
     // Hotkeys
     lua_register(L, "createHotkey", l_createHotkey);
     lua_register(L, "setHotkeyAction", l_setHotkeyAction);
+
+    // Thread helpers
+    lua_register(L, "createThread", l_createThread);
+    lua_register(L, "synchronize", l_synchronize);
+    lua_register(L, "queue", l_queue);
 
     // File regions
     lua_register(L, "readRegionFromFile", l_readRegionFromFile);

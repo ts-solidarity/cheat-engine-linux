@@ -152,7 +152,7 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [x] File I/O: readFile, writeFile, getCheatEngineDir, getTempDir
 - [x] Table: getTableEntry, setTableEntry, addressList manipulation
 - [x] Hotkeys: createHotkey, setHotkeyAction
-- [ ] Threads: createThread (Lua thread), synchronize, queue
+- [x] Threads: createThread (Lua thread), synchronize, queue
 
 **2.2 Code Analysis**
 - [x] Dissect Code — analyze a module's code sections
@@ -209,6 +209,8 @@ Note: Lua hotkey bindings now expose `createHotkey`/`setHotkeyAction` objects wi
 Note: Lua table/address-list bindings now include a headless address-list store with `getTableEntry`, `setTableEntry`, add/remove/clear helpers, and count queries for script compatibility.
 
 Note: Lua debug bindings now expose headless breakpoint metadata state for set/remove/continue/list/isDebugging/isBroken; actual ptrace stop/resume behavior remains in the native debugger/session layer.
+
+Note: Lua thread helpers now expose `createThread`, `synchronize`, and `queue` as main-state compatibility APIs with suspended/resumed thread objects, termination state, wait status, names, and callback error tracking.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

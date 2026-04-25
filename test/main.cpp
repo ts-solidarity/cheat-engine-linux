@@ -1003,6 +1003,34 @@ static void test_lua_hotkey_bindings() {
     printf("  createHotkey/setHotkeyAction: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_thread_bindings() {
+    printf("\n── Test: Lua thread bindings ──\n");
+
+    LuaEngine lua;
+    auto err = lua.execute(
+        "local hits = 0\n"
+        "local t = createThread(function() hits = hits + 1 end)\n"
+        "assert(type(t) == 'userdata')\n"
+        "assert(t.Finished == true and t:waitfor() == true)\n"
+        "t.Name = 'worker'\n"
+        "assert(t.Name == 'worker')\n"
+        "local s = createThread(function() hits = hits + 10 end, true)\n"
+        "assert(s.Suspended == true and s.Finished == false)\n"
+        "assert(s:resume() == true)\n"
+        "assert(s.Finished == true)\n"
+        "local value = synchronize(function() return 7 end)\n"
+        "assert(value == 7)\n"
+        "assert(queue(function() hits = hits + 100 end) == true)\n"
+        "assert(hits == 111)\n"
+        "local dead = createThread(function() hits = hits + 1000 end, true)\n"
+        "assert(dead:terminate() == true and dead.Terminated == true)\n"
+        "assert(dead:resume() == true and hits == 111)\n");
+
+    printf("  createThread/synchronize/queue: %s\n", err.empty() ? "OK" : "FAILED");
+    if (!err.empty())
+        printf("    error: %s\n", err.c_str());
+}
+
 static void test_lua_address_list_bindings() {
     printf("\n── Test: Lua address list bindings ──\n");
 
@@ -1820,6 +1848,7 @@ int main(int argc, char* argv[]) {
     test_lua_autoassemble_check();
     test_lua_utility_bindings();
     test_lua_hotkey_bindings();
+    test_lua_thread_bindings();
     test_lua_address_list_bindings();
     test_lua_debug_bindings();
     test_lua_process_bindings(targetPid);
