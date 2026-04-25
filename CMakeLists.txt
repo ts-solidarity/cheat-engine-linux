@@ -62,6 +62,7 @@ add_library(cecore SHARED
     symbols/elf_symbols.cpp
     debug/breakpoint_manager.cpp
     debug/code_finder.cpp
+    debug/stack_trace.cpp
     debug/tracer.cpp
     debug/debug_session.cpp
     scanner/memory_scanner.cpp

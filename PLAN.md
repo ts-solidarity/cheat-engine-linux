@@ -56,7 +56,7 @@
 - [x] Thread-specific breakpoints
 - [x] One-time breakpoints (auto-remove after hit)
 - [x] Breakpoint list manager window
-- [ ] Stack trace window
+- [x] Stack trace window
 - [x] Register editor window (modify registers live)
 - [ ] Floating point register panel (XMM/YMM)
 
@@ -121,6 +121,8 @@ Note: custom Lua formula scans (`soCustom`) are implemented with per-result Lua 
 Note: grouped/custom scan results preserve their dynamic value sizes in the GUI result table and undo flow.
 
 Note: codepage-aware string scans use `iconv` to convert UTF-8 search text into a selected single-byte target encoding, exposed through CLI `--encoding`, GUI text encoding choices, and Lua optional scan arguments.
+
+Note: the Stack Trace window now attaches to the selected thread, preserves the raw stack dump, and adds a frame-pointer call chain with symbol resolution plus a regression test for frame walking.
 
 ### Tier 2 — Important for Power Users (~6K lines, 3-4 weeks)
 

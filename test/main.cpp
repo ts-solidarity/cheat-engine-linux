@@ -4,6 +4,7 @@
 #include "core/ct_file.hpp"
 #include "analysis/code_analysis.hpp"
 #include "debug/breakpoint_manager.hpp"
+#include "debug/stack_trace.hpp"
 #include "scripting/lua_engine.hpp"
 
 #include <cstdio>
@@ -205,6 +206,42 @@ static void test_code_analysis_references() {
     printf("  RIP-relative instructions: %s\n", ripOk ? "OK" : "FAILED");
     printf("  Assembly pattern scan: %s\n", assemblyOk ? "OK" : "FAILED");
     printf("  Code caves: %s\n", cavesOk ? "OK" : "FAILED");
+}
+
+static void test_stack_trace_frame_walk() {
+    printf("\n── Test: Stack trace frame walk ──\n");
+
+    const uintptr_t stackBase = 0x70000000;
+    const uintptr_t rbp0 = stackBase + 0x100;
+    const uintptr_t rbp1 = stackBase + 0x140;
+    std::vector<uint8_t> stack(0x1000, 0);
+
+    auto writePtr = [&](uintptr_t address, uintptr_t value) {
+        std::memcpy(stack.data() + (address - stackBase), &value, sizeof(value));
+    };
+    writePtr(rbp0, rbp1);
+    writePtr(rbp0 + sizeof(uintptr_t), 0x401100);
+    writePtr(rbp1, 0);
+    writePtr(rbp1 + sizeof(uintptr_t), 0x401200);
+
+    FakeProcessHandle proc({
+        {{stackBase, stack.size(), MemProt::ReadWrite, MemType::Private, MemState::Committed, "[stack]"}, stack},
+    }, {});
+
+    CpuContext context{};
+    context.rip = 0x401000;
+    context.rsp = stackBase + 0x80;
+    context.rbp = rbp0;
+
+    auto frames = buildStackTrace(proc, context);
+    bool ok = frames.size() == 3 &&
+        frames[0].instructionPointer == 0x401000 &&
+        frames[1].instructionPointer == 0x401100 &&
+        frames[1].framePointer == rbp0 &&
+        frames[2].instructionPointer == 0x401200 &&
+        frames[2].framePointer == rbp1;
+
+    printf("  frame pointer walk: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {
@@ -1443,6 +1480,7 @@ int main(int argc, char* argv[]) {
 
     test_cheat_table_json();
     test_code_analysis_references();
+    test_stack_trace_frame_walk();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_data_directive_widths(targetPid);

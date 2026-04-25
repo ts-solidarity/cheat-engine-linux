@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QTableWidget>
+#include <QTabWidget>
 
 namespace ce::gui {
 
@@ -20,7 +21,9 @@ private:
     ce::ProcessHandle* proc_;
     QComboBox* threadCombo_;
     QLabel* statusLabel_;
-    QTableWidget* table_;
+    QTabWidget* tabs_;
+    QTableWidget* stackTable_;
+    QTableWidget* traceTable_;
 };
 
 } // namespace ce::gui
