@@ -61,6 +61,9 @@ public:
     /// Read value bytes at index i.
     void value(size_t i, void* buf, size_t valueSize) const;
 
+    /// Read original first-scan value bytes at index i.
+    void firstValue(size_t i, void* buf, size_t valueSize) const;
+
     /// Iterate all results.
     void forEach(std::function<void(uintptr_t addr, const void* value, size_t valueSize)> callback, size_t valueSize) const;
 
@@ -68,6 +71,7 @@ public:
 
     /// Add a result (used during scanning).
     void addResult(uintptr_t addr, const void* value, size_t valueSize);
+    void addResult(uintptr_t addr, const void* value, const void* firstValue, size_t valueSize);
 
     /// Flush buffered results to disk.
     void flush();
@@ -83,8 +87,10 @@ private:
     // Write buffers
     std::vector<uintptr_t> addrBuf_;
     std::vector<uint8_t> valueBuf_;
+    std::vector<uint8_t> firstValueBuf_;
     int addrFd_ = -1;
     int valueFd_ = -1;
+    int firstValueFd_ = -1;
 };
 
 /// The memory scanner engine.

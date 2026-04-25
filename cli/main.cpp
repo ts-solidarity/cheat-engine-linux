@@ -44,7 +44,7 @@ static void usage() {
         "  --value <val>     Value to search for\n"
         "  --value2 <val>    Second value (for 'between')\n"
         "  --compare <cmp>   exact, greater, less, between, changed,\n"
-        "                    unchanged, increased, decreased, unknown\n"
+        "                    unchanged, increased, decreased, unknown, samefirst\n"
         "  --previous <dir>  Previous scan result directory (for next scan)\n"
         "  --percent <pct>   Percentage threshold for next-scan compare\n"
         "  --percent2 <pct>  Upper bound for percentage 'between'\n"
@@ -84,6 +84,8 @@ static ScanCompare parseCompare(const char* s) {
     if (!strcmp(s, "increased")) return ScanCompare::Increased;
     if (!strcmp(s, "decreased")) return ScanCompare::Decreased;
     if (!strcmp(s, "unknown"))   return ScanCompare::Unknown;
+    if (!strcmp(s, "samefirst") || !strcmp(s, "same-as-first") || !strcmp(s, "sameasfirst"))
+        return ScanCompare::SameAsFirst;
     fprintf(stderr, "Unknown compare: %s\n", s);
     exit(1);
 }

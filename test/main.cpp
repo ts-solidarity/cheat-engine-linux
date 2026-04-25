@@ -942,6 +942,62 @@ static void test_percentage_scan() {
     printf("  increased/between by percent: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_same_as_first_scan() {
+    printf("\n── Test: Same-as-first scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  same as first: FAILED\n");
+        return;
+    }
+
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* value = reinterpret_cast<int32_t*>(page);
+    *value = 100;
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig first;
+    first.valueType = ValueType::Int32;
+    first.compareType = ScanCompare::Exact;
+    first.intValue = 100;
+    first.alignment = 4;
+    first.startAddress = base;
+    first.stopAddress = base + pageSize;
+
+    auto initial = scanner.firstScan(proc, first);
+
+    *value = 200;
+    ScanConfig changed = first;
+    changed.compareType = ScanCompare::Changed;
+    auto changedResult = scanner.nextScan(proc, changed, initial);
+
+    *value = 100;
+    ScanConfig same = first;
+    same.compareType = ScanCompare::SameAsFirst;
+    auto sameResult = scanner.nextScan(proc, same, changedResult);
+
+    *value = 200;
+    auto differentResult = scanner.nextScan(proc, same, changedResult);
+
+    int32_t firstValue = 0;
+    if (changedResult.count() > 0)
+        changedResult.firstValue(0, &firstValue, sizeof(firstValue));
+
+    bool ok = initial.count() == 1 &&
+        changedResult.count() == 1 && changedResult.address(0) == base &&
+        firstValue == 100 &&
+        sameResult.count() == 1 && sameResult.address(0) == base &&
+        differentResult.count() == 0;
+
+    munmap(page, pageSize);
+
+    printf("  same as first: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_float_rounding_scan() {
     printf("\n── Test: Float rounding scan ──\n");
 
@@ -1163,6 +1219,7 @@ int main(int argc, char* argv[]) {
     test_unicode_string_scan();
     test_all_types_scan();
     test_percentage_scan();
+    test_same_as_first_scan();
     test_float_rounding_scan();
     test_process_enumeration();
     test_process_memory(targetPid);

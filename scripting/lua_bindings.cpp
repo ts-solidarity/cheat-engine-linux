@@ -883,6 +883,7 @@ static void registerConstants(lua_State* L) {
     lua_pushinteger(L, 6); lua_setglobal(L, "soDecreasedValue");
     lua_pushinteger(L, 7); lua_setglobal(L, "soChanged");
     lua_pushinteger(L, 8); lua_setglobal(L, "soUnchanged");
+    lua_pushinteger(L, static_cast<int>(ScanCompare::SameAsFirst)); lua_setglobal(L, "soSameAsFirst");
 
     // Value types (CE compatible)
     lua_pushinteger(L, 0); lua_setglobal(L, "vtByte");

@@ -55,6 +55,7 @@ CompareFn<T> getCompare(ScanCompare cmp) {
         case ScanCompare::Unchanged: return cmpUnchanged<T>;
         case ScanCompare::Increased: return cmpIncreased<T>;
         case ScanCompare::Decreased: return cmpDecreased<T>;
+        case ScanCompare::SameAsFirst: return cmpUnchanged<T>;
         case ScanCompare::Unknown:   return cmpUnknown<T>;
         default:                     return cmpExact<T>;
     }
@@ -339,6 +340,9 @@ bool compareNextNumeric(const ScanConfig& config, const uint8_t* currentVal, con
     if (config.percentageScan && supportsPercentageCompare(config.compareType))
         return comparePercentage(config, cur, old);
 
+    if (config.compareType == ScanCompare::SameAsFirst)
+        return cur == old;
+
     auto cmp = getCompare<T>(config.compareType);
     if (config.compareType >= ScanCompare::Changed)
         return cmp(cur, old, T{});
@@ -438,27 +442,38 @@ void ScanConfig::parseBinary(const std::string& pattern) {
 ScanResult::ScanResult(const std::filesystem::path& dir) : dir_(dir) {
     auto addrPath = dir / "addresses.bin";
     auto valPath  = dir / "values.bin";
+    auto firstValPath = dir / "first_values.bin";
 
     if (std::filesystem::exists(addrPath)) {
         // Loading existing scan results (read-only mode)
         count_ = std::filesystem::file_size(addrPath) / sizeof(uintptr_t);
         addrFd_ = -1;
         valueFd_ = -1;
+        firstValueFd_ = -1;
     } else {
         // Creating new scan results (write mode)
         std::filesystem::create_directories(dir);
         addrFd_ = open(addrPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
         valueFd_ = open(valPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        firstValueFd_ = open(firstValPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
         addrBuf_.reserve(8192);
         valueBuf_.reserve(8192 * 8);
+        firstValueBuf_.reserve(8192 * 8);
     }
 }
 
 void ScanResult::addResult(uintptr_t addr, const void* value, size_t valueSize) {
+    addResult(addr, value, value, valueSize);
+}
+
+void ScanResult::addResult(uintptr_t addr, const void* value, const void* firstValue, size_t valueSize) {
     addrBuf_.push_back(addr);
     size_t pos = valueBuf_.size();
     valueBuf_.resize(pos + valueSize);
     std::memcpy(valueBuf_.data() + pos, value, valueSize);
+    size_t firstPos = firstValueBuf_.size();
+    firstValueBuf_.resize(firstPos + valueSize);
+    std::memcpy(firstValueBuf_.data() + firstPos, firstValue, valueSize);
     valueSize_ = valueSize;
     ++count_;
 
@@ -472,14 +487,18 @@ void ScanResult::flush() {
         ::write(addrFd_, addrBuf_.data(), addrBuf_.size() * sizeof(uintptr_t));
     if (valueFd_ >= 0)
         ::write(valueFd_, valueBuf_.data(), valueBuf_.size());
+    if (firstValueFd_ >= 0)
+        ::write(firstValueFd_, firstValueBuf_.data(), firstValueBuf_.size());
     addrBuf_.clear();
     valueBuf_.clear();
+    firstValueBuf_.clear();
 }
 
 void ScanResult::finalize() {
     flush();
     if (addrFd_ >= 0) { close(addrFd_); addrFd_ = -1; }
     if (valueFd_ >= 0) { close(valueFd_); valueFd_ = -1; }
+    if (firstValueFd_ >= 0) { close(firstValueFd_); firstValueFd_ = -1; }
 }
 
 uintptr_t ScanResult::address(size_t i) const {
@@ -496,6 +515,17 @@ void ScanResult::value(size_t i, void* buf, size_t valueSize) const {
     auto path = dir_ / "values.bin";
     int fd = open(path.c_str(), O_RDONLY);
     if (fd < 0) return;
+    pread(fd, buf, valueSize, i * valueSize);
+    close(fd);
+}
+
+void ScanResult::firstValue(size_t i, void* buf, size_t valueSize) const {
+    auto path = dir_ / "first_values.bin";
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        value(i, buf, valueSize);
+        return;
+    }
     pread(fd, buf, valueSize, i * valueSize);
     close(fd);
 }
@@ -662,9 +692,11 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
     std::filesystem::create_directories(mergedDir);
     auto mergedAddrPath = mergedDir / "addresses.bin";
     auto mergedValPath = mergedDir / "values.bin";
+    auto mergedFirstValPath = mergedDir / "first_values.bin";
 
     int madFd = open(mergedAddrPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     int mvdFd = open(mergedValPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int mfvdFd = open(mergedFirstValPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     size_t totalCount = 0;
 
     constexpr size_t COPYBUF = 1024 * 1024; // 1MB copy buffer
@@ -693,9 +725,20 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
                 ::write(mvdFd, copyBuf.data(), n);
             close(tfd);
         }
+
+        // Concatenate first-scan values file
+        auto tFirstValPath = tr.directory() / "first_values.bin";
+        tfd = open(tFirstValPath.c_str(), O_RDONLY);
+        if (tfd >= 0) {
+            ssize_t n;
+            while ((n = ::read(tfd, copyBuf.data(), COPYBUF)) > 0)
+                ::write(mfvdFd, copyBuf.data(), n);
+            close(tfd);
+        }
     }
     close(madFd);
     close(mvdFd);
+    close(mfvdFd);
 
     // Cleanup per-thread dirs
     for (int t = 0; t < nThreads; ++t)
@@ -723,23 +766,31 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
 
     auto addrPath = previous.directory() / "addresses.bin";
     auto valPath  = previous.directory() / "values.bin";
+    auto firstValPath = previous.directory() / "first_values.bin";
     int afd = open(addrPath.c_str(), O_RDONLY);
     int vfd = open(valPath.c_str(), O_RDONLY);
+    int ffd = open(firstValPath.c_str(), O_RDONLY);
     if (afd < 0 || vfd < 0) {
         if (afd >= 0) close(afd);
         if (vfd >= 0) close(vfd);
+        if (ffd >= 0) close(ffd);
         result.finalize();
         return result;
     }
 
     std::vector<uintptr_t> addrs(BATCH);
     std::vector<uint8_t> oldVals(BATCH * valueSize);
+    std::vector<uint8_t> firstVals(BATCH * valueSize);
 
     size_t remaining = total;
     while (remaining > 0 && !cancelled_.load()) {
         size_t n = std::min(remaining, BATCH);
         ::read(afd, addrs.data(), n * sizeof(uintptr_t));
         ::read(vfd, oldVals.data(), n * valueSize);
+        if (ffd >= 0)
+            ::read(ffd, firstVals.data(), n * valueSize);
+        else
+            std::memcpy(firstVals.data(), oldVals.data(), n * valueSize);
 
         for (size_t i = 0; i < n; ++i) {
             // Read current value
@@ -748,32 +799,36 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
             if (!rr || *rr < valueSize) continue;
 
             uint8_t* oldVal = oldVals.data() + i * valueSize;
+            uint8_t* firstVal = firstVals.data() + i * valueSize;
+            uint8_t* compareVal = config.compareType == ScanCompare::SameAsFirst ? firstVal : oldVal;
             bool match = false;
 
             // Compare based on type
             switch (config.valueType) {
                 case ValueType::Byte:
-                    match = compareNextNumeric<uint8_t>(config, currentVal.data(), oldVal);
+                    match = compareNextNumeric<uint8_t>(config, currentVal.data(), compareVal);
                     break;
                 case ValueType::Int16:
-                    match = compareNextNumeric<int16_t>(config, currentVal.data(), oldVal);
+                    match = compareNextNumeric<int16_t>(config, currentVal.data(), compareVal);
                     break;
                 case ValueType::Int32: {
-                    match = compareNextNumeric<int32_t>(config, currentVal.data(), oldVal);
+                    match = compareNextNumeric<int32_t>(config, currentVal.data(), compareVal);
                     break;
                 }
                 case ValueType::Int64:
-                    match = compareNextNumeric<int64_t>(config, currentVal.data(), oldVal);
+                    match = compareNextNumeric<int64_t>(config, currentVal.data(), compareVal);
                     break;
                 case ValueType::Float: {
-                    match = compareNextNumeric<float>(config, currentVal.data(), oldVal);
+                    match = compareNextNumeric<float>(config, currentVal.data(), compareVal);
                     break;
                 }
                 case ValueType::Double:
-                    match = compareNextNumeric<double>(config, currentVal.data(), oldVal);
+                    match = compareNextNumeric<double>(config, currentVal.data(), compareVal);
                     break;
                 case ValueType::String: {
-                    if (config.compareType >= ScanCompare::Changed) {
+                    if (config.compareType == ScanCompare::SameAsFirst) {
+                        match = std::memcmp(currentVal.data(), firstVal, valueSize) == 0;
+                    } else if (config.compareType >= ScanCompare::Changed) {
                         match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
                                 (config.compareType == ScanCompare::Changed ||
                                  config.compareType == ScanCompare::Increased ||
@@ -788,7 +843,9 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                 }
                 case ValueType::UnicodeString: {
                     auto needle = utf16LeBytes(config.stringValue);
-                    if (config.compareType >= ScanCompare::Changed) {
+                    if (config.compareType == ScanCompare::SameAsFirst) {
+                        match = std::memcmp(currentVal.data(), firstVal, valueSize) == 0;
+                    } else if (config.compareType >= ScanCompare::Changed) {
                         match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
                                 (config.compareType == ScanCompare::Changed ||
                                  config.compareType == ScanCompare::Increased ||
@@ -802,7 +859,9 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                     break;
                 }
                 case ValueType::ByteArray:
-                    if (config.compareType >= ScanCompare::Changed) {
+                    if (config.compareType == ScanCompare::SameAsFirst) {
+                        match = std::memcmp(currentVal.data(), firstVal, valueSize) == 0;
+                    } else if (config.compareType >= ScanCompare::Changed) {
                         match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
                                 (config.compareType == ScanCompare::Changed ||
                                  config.compareType == ScanCompare::Increased ||
@@ -814,7 +873,9 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                     }
                     break;
                 case ValueType::Binary:
-                    if (config.compareType >= ScanCompare::Changed) {
+                    if (config.compareType == ScanCompare::SameAsFirst) {
+                        match = std::memcmp(currentVal.data(), firstVal, valueSize) == 0;
+                    } else if (config.compareType >= ScanCompare::Changed) {
                         match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
                                 (config.compareType == ScanCompare::Changed ||
                                  config.compareType == ScanCompare::Increased ||
@@ -833,14 +894,17 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                     break;
                 default: {
                     // Generic byte comparison
-                    match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
-                            (config.compareType == ScanCompare::Changed);
+                    if (config.compareType == ScanCompare::SameAsFirst)
+                        match = std::memcmp(currentVal.data(), firstVal, valueSize) == 0;
+                    else
+                        match = (std::memcmp(currentVal.data(), oldVal, valueSize) != 0) ==
+                                (config.compareType == ScanCompare::Changed);
                     break;
                 }
             }
 
             if (match)
-                result.addResult(addrs[i], currentVal.data(), valueSize);
+                result.addResult(addrs[i], currentVal.data(), firstVal, valueSize);
         }
 
         processed += n;
@@ -850,6 +914,7 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
 
     close(afd);
     close(vfd);
+    if (ffd >= 0) close(ffd);
     result.finalize();
     return result;
 }

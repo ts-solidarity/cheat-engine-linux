@@ -107,6 +107,7 @@ enum class ScanCompare {
     Unchanged,
     Increased,
     Decreased,
+    SameAsFirst,
 };
 
 // ── Freeze modes ──

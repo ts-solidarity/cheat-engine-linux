@@ -307,7 +307,7 @@ void MainWindow::setupUi() {
     scanTypeCombo_ = new QComboBox;
     scanTypeCombo_->addItems({"Exact Value", "Bigger than...", "Smaller than...",
         "Value between...", "Unknown initial value", "Increased value",
-        "Decreased value", "Changed value", "Unchanged value"});
+        "Decreased value", "Changed value", "Unchanged value", "Same as first scan"});
     rightLayout->addWidget(scanTypeCombo_);
 
     // Value type
@@ -552,6 +552,7 @@ static ScanCompare mapScanType(int index) {
         case 6: return ScanCompare::Decreased;
         case 7: return ScanCompare::Changed;
         case 8: return ScanCompare::Unchanged;
+        case 9: return ScanCompare::SameAsFirst;
         default: return ScanCompare::Exact;
     }
 }
