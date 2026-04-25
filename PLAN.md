@@ -101,7 +101,7 @@ Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field of
 - [x] Copy/paste address entries
 
 **1.5 Cheat Table Format (.CT)**
-- [ ] XML-based save/load (matching CE's format for compatibility)
+- [x] XML-based save/load (matching CE's format for compatibility)
 - [x] Embedded Lua scripts in table
 - [x] Embedded auto-assembler scripts
 - [x] Structure definitions in table
@@ -213,6 +213,8 @@ Note: Lua debug bindings now expose headless breakpoint metadata state for set/r
 Note: Lua thread helpers now expose `createThread`, `synchronize`, and `queue` as main-state compatibility APIs with suspended/resumed thread objects, termination state, wait status, names, and callback error tracking.
 
 Note: the address-list context menu now includes a hotkey configuration dialog backed by `QKeySequenceEdit`; configured keys are preserved in address-list JSON and .CT save/load conversion.
+
+Note: .CT XML now writes CE-style textual variable types such as `4 Bytes`, `Float`, and `Array of byte`, while the loader still accepts older numeric type IDs for backward compatibility.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

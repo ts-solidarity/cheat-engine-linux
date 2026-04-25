@@ -26,35 +26,70 @@ static std::string xmlEscape(const std::string& s) {
 
 static std::string typeToStr(ValueType vt) {
     switch (vt) {
-        case ValueType::Byte:    return "0";
-        case ValueType::Int16:   return "1";
-        case ValueType::Int32:   return "2";
-        case ValueType::Int64:   return "3";
-        case ValueType::Float:   return "4";
-        case ValueType::Double:  return "5";
-        case ValueType::String:  return "6";
-        case ValueType::ByteArray: return "8";
-        case ValueType::Binary:  return "9";
-        case ValueType::All:     return "10";
-        default: return "2";
+        case ValueType::Byte:    return "Byte";
+        case ValueType::Int16:   return "2 Bytes";
+        case ValueType::Int32:   return "4 Bytes";
+        case ValueType::Int64:   return "8 Bytes";
+        case ValueType::Float:   return "Float";
+        case ValueType::Double:  return "Double";
+        case ValueType::String:  return "String";
+        case ValueType::ByteArray: return "Array of byte";
+        case ValueType::Binary:  return "Binary";
+        case ValueType::Pointer: return "Pointer";
+        case ValueType::Custom:  return "Custom";
+        default: return "4 Bytes";
     }
 }
 
-static ValueType strToType(const std::string& s) {
-    int v = std::atoi(s.c_str());
-    switch (v) {
-        case 0:  return ValueType::Byte;
-        case 1:  return ValueType::Int16;
-        case 2:  return ValueType::Int32;
-        case 3:  return ValueType::Int64;
-        case 4:  return ValueType::Float;
-        case 5:  return ValueType::Double;
-        case 6:  return ValueType::String;
-        case 8:  return ValueType::ByteArray;
-        case 9:  return ValueType::Binary;
-        case 10: return ValueType::All;
-        default: return ValueType::Int32;
+static std::string normalizedTypeName(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (std::isalnum(c))
+            out += static_cast<char>(std::tolower(c));
     }
+    return out;
+}
+
+static ValueType strToType(const std::string& s) {
+    bool numeric = !s.empty();
+    for (unsigned char c : s) {
+        if (!std::isdigit(c)) {
+            numeric = false;
+            break;
+        }
+    }
+    if (numeric) {
+        int v = std::atoi(s.c_str());
+        switch (v) {
+            case 0:  return ValueType::Byte;
+            case 1:  return ValueType::Int16;
+            case 2:  return ValueType::Int32;
+            case 3:  return ValueType::Int64;
+            case 4:  return ValueType::Float;
+            case 5:  return ValueType::Double;
+            case 6:  return ValueType::String;
+            case 8:  return ValueType::ByteArray;
+            case 9:  return ValueType::Binary;
+            case 10: return ValueType::All;
+            case 12: return ValueType::Custom;
+            case 13: return ValueType::Pointer;
+            default: return ValueType::Int32;
+        }
+    }
+
+    auto type = normalizedTypeName(s);
+    if (type == "byte" || type == "1byte") return ValueType::Byte;
+    if (type == "2bytes" || type == "short") return ValueType::Int16;
+    if (type == "4bytes" || type == "integer" || type == "int") return ValueType::Int32;
+    if (type == "8bytes" || type == "long" || type == "int64") return ValueType::Int64;
+    if (type == "float" || type == "single") return ValueType::Float;
+    if (type == "double") return ValueType::Double;
+    if (type == "string" || type == "text") return ValueType::String;
+    if (type == "arrayofbyte" || type == "bytearray" || type == "aob") return ValueType::ByteArray;
+    if (type == "binary" || type == "bits") return ValueType::Binary;
+    if (type == "pointer") return ValueType::Pointer;
+    if (type == "custom" || type == "customtype") return ValueType::Custom;
+    return ValueType::Int32;
 }
 
 // ── Save as CE-compatible XML ──

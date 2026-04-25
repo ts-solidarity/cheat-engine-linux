@@ -165,11 +165,19 @@ static void test_cheat_table_json() {
     bool jsonOk = jsonLoaded.loadJson(jsonPath.string()) && matchesTable(jsonLoaded);
     CheatTable xmlLoaded;
     bool xmlOk = xmlLoaded.load(xmlPath.string()) && matchesTable(xmlLoaded);
+    std::ifstream xmlFile(xmlPath);
+    std::string xmlText((std::istreambuf_iterator<char>(xmlFile)), {});
+    bool xmlTypeNamesOk =
+        xmlText.find("<VariableType>4 Bytes</VariableType>") != std::string::npos &&
+        xmlText.find("<Type>4 Bytes</Type>") != std::string::npos &&
+        xmlText.find("<Type>Float</Type>") != std::string::npos &&
+        xmlText.find("<Type>Array of byte</Type>") != std::string::npos;
     std::filesystem::remove(jsonPath);
     std::filesystem::remove(xmlPath);
 
     printf("  JSON round trip: %s\n", jsonOk ? "OK" : "FAILED");
     printf("  CT XML round trip: %s\n", xmlOk ? "OK" : "FAILED");
+    printf("  CT XML CE type names: %s\n", xmlTypeNamesOk ? "OK" : "FAILED");
 }
 
 static void test_code_analysis_references() {
