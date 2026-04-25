@@ -416,6 +416,46 @@ static void test_autoassembler_loadlibrary(pid_t pid) {
         printf("    error: %s\n", result.error.c_str());
 }
 
+static void test_autoassembler_struct_definitions(pid_t pid) {
+    printf("\n── Test: AutoAssembler struct definitions ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+    auto result = aa.execute(proc,
+        "[ENABLE]\n"
+        "struct stackview\n"
+        "returnaddress:\n"
+        "  dd ?\n"
+        "param1:\n"
+        "  dq ?\n"
+        "param2:\n"
+        "  dd ?\n"
+        "endstruct\n"
+        "alloc(structblock, 4096)\n"
+        "structblock:\n"
+        "mov eax, stackview.returnaddress\n"
+        "mov ebx, param1\n"
+        "mov ecx, stackview\n");
+
+    uint8_t actual[15] = {};
+    if (result.success && !result.disableInfo.allocs.empty())
+        proc.read(result.disableInfo.allocs[0].address, actual, sizeof(actual));
+
+    const uint8_t expected[] = {
+        0xb8, 0x00, 0x00, 0x00, 0x00,
+        0xbb, 0x04, 0x00, 0x00, 0x00,
+        0xb9, 0x10, 0x00, 0x00, 0x00
+    };
+
+    bool ok = result.success && std::memcmp(actual, expected, sizeof(expected)) == 0;
+    if (result.success)
+        aa.disable(proc, "", result.disableInfo);
+
+    printf("  struct definitions: %s\n", ok ? "OK" : "FAILED");
+    if (!ok && !result.error.empty())
+        printf("    error: %s\n", result.error.c_str());
+}
+
 static void test_autoassembler_aobscanmodule(pid_t pid) {
     printf("\n── Test: AutoAssembler aobscanmodule ──\n");
 
@@ -1106,6 +1146,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_ds(targetPid);
     test_autoassembler_loadbinary(targetPid);
     test_autoassembler_loadlibrary(targetPid);
+    test_autoassembler_struct_definitions(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_aobscanregion(targetPid);
     test_autoassembler_aobscanall(targetPid);

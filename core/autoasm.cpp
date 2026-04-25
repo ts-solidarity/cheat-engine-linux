@@ -69,6 +69,17 @@ static std::string formatHex(uintptr_t address) {
     return buf;
 }
 
+static std::string formatHexLiteral(uintptr_t address) {
+    return "0x" + formatHex(address);
+}
+
+static std::string stripInlineComment(std::string line) {
+    auto commentPos = line.find("//");
+    if (commentPos != std::string::npos)
+        line = line.substr(0, commentPos);
+    return trim(line);
+}
+
 static bool parseWholeUnsigned(const std::string& text, int base, uint64_t& value) {
     auto s = trim(text);
     if (s.empty())
@@ -205,6 +216,139 @@ static bool parseDataDirective(const std::string& op, const std::string& data,
             bytes.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
     }
 
+    return true;
+}
+
+static bool parseStructDataSize(const std::string& line, size_t& size, std::string& error) {
+    auto trimmed = trim(line);
+    auto upper = toUpper(trimmed);
+    size = 0;
+
+    if (startsWith(upper, "DB ") || startsWith(upper, "DW ") ||
+        startsWith(upper, "DD ") || startsWith(upper, "DQ ")) {
+        size_t width = 1;
+        auto op = upper.substr(0, 2);
+        if (op == "DW") width = 2;
+        else if (op == "DD") width = 4;
+        else if (op == "DQ") width = 8;
+
+        auto values = splitDataValues(trimmed.substr(3));
+        if (values.empty()) {
+            error = "STRUCT data directive requires at least one value";
+            return false;
+        }
+
+        for (auto token : values) {
+            token = trim(token);
+            if (token.size() >= 2 &&
+                ((token.front() == '"' && token.back() == '"') || (token.front() == '\'' && token.back() == '\''))) {
+                if (width != 1) {
+                    error = "STRUCT string literal is only supported for DB";
+                    return false;
+                }
+                size += stripOptionalQuotes(token).size();
+                continue;
+            }
+            size += width;
+        }
+        return true;
+    }
+
+    if (startsWith(upper, "DS ")) {
+        auto text = stripOptionalQuotes(trimmed.substr(3));
+        if (text.empty()) {
+            error = "STRUCT DS requires a string";
+            return false;
+        }
+        size = text.size();
+        return true;
+    }
+
+    return false;
+}
+
+static bool expandStructDefinitions(const std::string& code, std::string& expanded,
+                                    std::vector<std::string>& log, std::string& error) {
+    std::istringstream ss(code);
+    std::string rawLine;
+    std::string generated;
+    std::string body;
+    bool inStruct = false;
+    std::string structName;
+    size_t offset = 0;
+
+    while (std::getline(ss, rawLine)) {
+        auto line = stripInlineComment(rawLine);
+        auto upper = toUpper(line);
+
+        if (!inStruct) {
+            if (startsWith(upper, "STRUCT ")) {
+                structName = trim(line.substr(7));
+                if (structName.empty()) {
+                    error = "STRUCT requires a name";
+                    return false;
+                }
+                inStruct = true;
+                offset = 0;
+                log.push_back("STRUCT: " + structName);
+                continue;
+            }
+
+            body += rawLine + "\n";
+            continue;
+        }
+
+        if (line.empty() || line[0] == ';' || line[0] == '/')
+            continue;
+
+        if (upper == "ENDS" || upper == "ENDSTRUCT") {
+            generated += "define(" + structName + "," + formatHexLiteral(offset) + ")\n";
+            log.push_back("ENDSTRUCT: " + structName + " size=" + std::to_string(offset));
+            inStruct = false;
+            structName.clear();
+            continue;
+        }
+
+        auto work = line;
+        auto colon = work.find(':');
+        if (colon != std::string::npos) {
+            auto field = trim(work.substr(0, colon));
+            if (field.empty()) {
+                error = "STRUCT has an empty field name";
+                return false;
+            }
+
+            auto value = formatHexLiteral(offset);
+            generated += "define(" + structName + "." + field + "," + value + ")\n";
+            generated += "define(" + field + "," + value + ")\n";
+            log.push_back("STRUCT: " + structName + "." + field + " = " + value);
+            work = trim(work.substr(colon + 1));
+            if (work.empty())
+                continue;
+            upper = toUpper(work);
+        }
+
+        size_t dataSize = 0;
+        std::string sizeError;
+        if (parseStructDataSize(work, dataSize, sizeError)) {
+            offset += dataSize;
+            continue;
+        }
+        if (!sizeError.empty()) {
+            error = sizeError;
+            return false;
+        }
+
+        error = "Unsupported STRUCT line in " + structName + ": " + work;
+        return false;
+    }
+
+    if (inStruct) {
+        error = "STRUCT missing ENDSTRUCT/ENDS: " + structName;
+        return false;
+    }
+
+    expanded = generated + body;
     return true;
 }
 
@@ -686,6 +830,11 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         // No sections — treat entire script as enable
         enableCode = script;
     }
+
+    std::string expandedEnableCode;
+    if (!expandStructDefinitions(enableCode, expandedEnableCode, result.log, result.error))
+        return result;
+    enableCode = std::move(expandedEnableCode);
 
     // ── Phase 1: Parse directives ──
     std::vector<Alloc> allocs;
@@ -1182,6 +1331,11 @@ AutoAsmResult AutoAssembler::check(const std::string& script) {
     // Parse without a process — syntax check only
     auto enableCode = extractSection(script, "ENABLE");
     if (enableCode.empty()) enableCode = script;
+
+    std::string expandedEnableCode;
+    if (!expandStructDefinitions(enableCode, expandedEnableCode, result.log, result.error))
+        return result;
+    enableCode = std::move(expandedEnableCode);
 
     std::vector<Alloc> allocs;
     std::vector<Label> labels;
