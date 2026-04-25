@@ -441,6 +441,18 @@ void MainWindow::setupUi() {
             menu.addAction("Delete", this, &MainWindow::onDeleteAddresses, QKeySequence::Delete);
 
             menu.addSeparator();
+            menu.addAction("Indent", [this, selected]() {
+                QList<int> rows;
+                for (const auto& idx : selected) rows.append(idx.row());
+                addressListModel_->indentRows(rows);
+            });
+            menu.addAction("Outdent", [this, selected]() {
+                QList<int> rows;
+                for (const auto& idx : selected) rows.append(idx.row());
+                addressListModel_->outdentRows(rows);
+            });
+
+            menu.addSeparator();
             auto* freezeMenu = menu.addMenu("Freeze Mode");
             freezeMenu->addAction("Normal", [this, selected]() {
                 for (auto& idx : selected) addressListModel_->setFreezeMode(idx.row(), FreezeMode::Normal);
@@ -490,7 +502,7 @@ void MainWindow::setupUi() {
             }
         });
         menu.addAction("Add Group", [this]() {
-            addressListModel_->addEntry(0, ValueType::Int32, "-- Group --");
+            addressListModel_->addGroup();
         });
         menu.addAction("Paste", this, &MainWindow::onPasteAddresses, QKeySequence::Paste);
 
@@ -771,6 +783,8 @@ void MainWindow::onSaveTable() {
             e.autoAsmScript = obj["asm"].toString().toStdString();
             e.color = obj["color"].toString().toStdString();
             e.dropdownList = obj["dropdown"].toString().toStdString();
+            e.isGroup = obj["group"].toBool();
+            e.parentId = obj["parent"].toInt(-1);
             table.entries.push_back(e);
         }
         table.save(path.toStdString());
@@ -805,6 +819,8 @@ void MainWindow::onLoadTable() {
             obj["asm"] = QString::fromStdString(e.autoAsmScript);
             obj["color"] = QString::fromStdString(e.color);
             obj["dropdown"] = QString::fromStdString(e.dropdownList);
+            obj["group"] = e.isGroup;
+            obj["parent"] = e.parentId;
             arr.append(obj);
         }
         loadAddressEntries(arr);
@@ -972,7 +988,22 @@ AddressListModel::AddressListModel(QObject* parent) : QAbstractTableModel(parent
 
 void AddressListModel::addEntry(uintptr_t addr, ValueType type, const QString& desc) {
     beginInsertRows({}, entries_.size(), entries_.size());
-    entries_.push_back({false, desc, addr, type, "?"});
+    AddressEntry entry;
+    entry.description = desc;
+    entry.address = addr;
+    entry.type = type;
+    entry.currentValue = "?";
+    entries_.push_back(std::move(entry));
+    endInsertRows();
+}
+
+void AddressListModel::addGroup(const QString& desc) {
+    beginInsertRows({}, entries_.size(), entries_.size());
+    AddressEntry entry;
+    entry.description = desc;
+    entry.currentValue.clear();
+    entry.isGroup = true;
+    entries_.push_back(std::move(entry));
     endInsertRows();
 }
 
@@ -1132,6 +1163,7 @@ static bool parseComparableValue(ValueType type, const QString& valStr, double& 
 
 void AddressListModel::freezeWrite(ProcessHandle* proc) {
     for (auto& e : entries_) {
+        if (e.isGroup) continue;
         if (!e.active || e.frozenValue.isEmpty()) continue;
 
         if (e.freezeMode == FreezeMode::Normal) {
@@ -1163,7 +1195,9 @@ void AddressListModel::freezeWrite(ProcessHandle* proc) {
 
 QJsonArray AddressListModel::toJson() const {
     QJsonArray arr;
-    for (auto& e : entries_) {
+    std::vector<int> lastRowAtIndent;
+    for (int row = 0; row < (int)entries_.size(); ++row) {
+        const auto& e = entries_[row];
         QJsonObject obj;
         obj["description"] = e.description;
         obj["address"] = QString("0x%1").arg(e.address, 0, 16);
@@ -1173,7 +1207,17 @@ QJsonArray AddressListModel::toJson() const {
         obj["asm"] = e.autoAsmScript;
         obj["color"] = e.color;
         obj["dropdown"] = e.dropdownList;
+        obj["indent"] = e.indent;
+        obj["group"] = e.isGroup;
+        if (e.indent > 0 && e.indent - 1 < (int)lastRowAtIndent.size())
+            obj["parent"] = lastRowAtIndent[e.indent - 1];
         arr.append(obj);
+
+        if (e.indent >= (int)lastRowAtIndent.size())
+            lastRowAtIndent.resize(e.indent + 1, -1);
+        lastRowAtIndent[e.indent] = row;
+        if ((int)lastRowAtIndent.size() > e.indent + 1)
+            lastRowAtIndent.resize(e.indent + 1);
     }
     return arr;
 }
@@ -1181,6 +1225,7 @@ QJsonArray AddressListModel::toJson() const {
 void AddressListModel::fromJson(const QJsonArray& arr) {
     beginResetModel();
     entries_.clear();
+    std::vector<int> parentIndentById;
     for (auto val : arr) {
         auto obj = val.toObject();
         AddressEntry e;
@@ -1192,7 +1237,19 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
         e.autoAsmScript = obj["asm"].toString();
         e.color = obj["color"].toString();
         e.dropdownList = obj["dropdown"].toString();
+        e.indent = std::max(0, obj.contains("indent")
+            ? obj["indent"].toInt()
+            : (obj["parent"].toInt(-1) >= 0 && obj["parent"].toInt(-1) < (int)parentIndentById.size()
+                ? parentIndentById[obj["parent"].toInt()] + 1
+                : 0));
+        e.isGroup = obj["group"].toBool();
+        if (e.isGroup) {
+            e.address = 0;
+            e.currentValue.clear();
+            e.frozenValue.clear();
+        }
         if (e.active) e.frozenValue = e.currentValue;
+        parentIndentById.push_back(e.indent);
         entries_.push_back(e);
     }
     endResetModel();
@@ -1202,6 +1259,27 @@ void AddressListModel::setFreezeMode(int row, FreezeMode mode) {
     if (row < 0 || row >= (int)entries_.size()) return;
     entries_[row].freezeMode = mode;
     emit dataChanged(index(row, 0), index(row, columnCount() - 1));
+}
+
+void AddressListModel::indentRows(QList<int> rows) {
+    if (rows.isEmpty()) return;
+    std::sort(rows.begin(), rows.end());
+    for (int row : rows) {
+        if (row <= 0 || row >= (int)entries_.size()) continue;
+        int maxIndent = entries_[row - 1].indent + 1;
+        entries_[row].indent = std::min(entries_[row].indent + 1, maxIndent);
+    }
+    emit dataChanged(index(rows.first(), 0), index(rows.last(), columnCount() - 1));
+}
+
+void AddressListModel::outdentRows(QList<int> rows) {
+    if (rows.isEmpty()) return;
+    std::sort(rows.begin(), rows.end());
+    for (int row : rows) {
+        if (row < 0 || row >= (int)entries_.size()) continue;
+        entries_[row].indent = std::max(0, entries_[row].indent - 1);
+    }
+    emit dataChanged(index(rows.first(), 0), index(rows.last(), columnCount() - 1));
 }
 
 void AddressListModel::reportActivationError(const QString& title, const QString& message) {
@@ -1265,6 +1343,7 @@ void AddressListModel::removeEntries(QList<int> rows) {
 void AddressListModel::updateValues(ProcessHandle* proc) {
     for (size_t i = 0; i < entries_.size(); ++i) {
         auto& e = entries_[i];
+        if (e.isGroup) continue;
         if (e.active) continue; // Don't overwrite display for frozen entries
 
         uint8_t buf[8] = {};
@@ -1325,6 +1404,7 @@ QVariant AddressListModel::data(const QModelIndex& index, int role) const {
         }
         case 2: return e.isGroup ? QString("") : QString("0x%1").arg(e.address, 0, 16);
         case 3: {
+            if (e.isGroup) return "";
             switch (e.type) {
                 case ValueType::Byte:   return "Byte";
                 case ValueType::Int16:  return "2 Bytes";
@@ -1335,7 +1415,7 @@ QVariant AddressListModel::data(const QModelIndex& index, int role) const {
                 default: return "?";
             }
         }
-        case 4: return e.dropdownList.isEmpty()
+        case 4: return e.isGroup ? QString("") : e.dropdownList.isEmpty()
             ? e.currentValue
             : displayDropdownValue(e.currentValue, e.dropdownList);
         default: return {};
@@ -1344,8 +1424,11 @@ QVariant AddressListModel::data(const QModelIndex& index, int role) const {
 
 Qt::ItemFlags AddressListModel::flags(const QModelIndex& index) const {
     auto f = QAbstractTableModel::flags(index);
+    if (!index.isValid() || index.row() < 0 || index.row() >= (int)entries_.size())
+        return f;
+    const auto& e = entries_[index.row()];
     if (index.column() == 0) f |= Qt::ItemIsUserCheckable;
-    if (index.column() == 1 || index.column() == 4) f |= Qt::ItemIsEditable;
+    if (index.column() == 1 || (!e.isGroup && index.column() == 4)) f |= Qt::ItemIsEditable;
     return f;
 }
 
@@ -1377,6 +1460,7 @@ bool AddressListModel::setData(const QModelIndex& index, const QVariant& value, 
         }
         if (index.column() == 4) {
             auto& e = entries_[index.row()];
+            if (e.isGroup) return false;
             auto rawValue = e.dropdownList.isEmpty()
                 ? value.toString()
                 : resolveDropdownInput(value.toString(), e.dropdownList);

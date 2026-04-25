@@ -141,8 +141,11 @@ class AddressListModel : public QAbstractTableModel {
 public:
     explicit AddressListModel(QObject* parent = nullptr);
     void addEntry(uintptr_t addr, ce::ValueType type, const QString& desc = "No description");
+    void addGroup(const QString& desc = "-- Group --");
     void removeEntry(int row);
     void removeEntries(QList<int> rows);
+    void indentRows(QList<int> rows);
+    void outdentRows(QList<int> rows);
     void setFreezeMode(int row, ce::FreezeMode mode);
     const std::vector<AddressEntry>& entries() const { return entries_; }
     void setProcess(ce::ProcessHandle* proc) { proc_ = proc; }
