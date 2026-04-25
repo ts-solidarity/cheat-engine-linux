@@ -896,6 +896,33 @@ static void test_lua_hotkey_bindings() {
     printf("  createHotkey/setHotkeyAction: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_address_list_bindings() {
+    printf("\n── Test: Lua address list bindings ──\n");
+
+    LuaEngine lua;
+    auto err = lua.execute(
+        "addressList_clear()\n"
+        "assert(addressList_getCount() == 0)\n"
+        "local first = addressList_addEntry({Description='Health', Address='0x1000', Type='i32', Value='100', Active=false})\n"
+        "assert(first == 0)\n"
+        "assert(addressList_getCount() == 1)\n"
+        "local entry = getTableEntry(0)\n"
+        "assert(entry.Description == 'Health' and entry.Address == '0x1000')\n"
+        "assert(setTableEntry(0, {Description='Mana', Address='0x2000', Type='float', Value='12.5', Active=true}))\n"
+        "entry = getTableEntry(0)\n"
+        "assert(entry.Description == 'Mana' and entry.Active == true)\n"
+        "addressList_addEntry({Description='Ammo', Address='0x3000'})\n"
+        "assert(addressList_getCount() == 2)\n"
+        "assert(addressList_removeEntry(0) == true)\n"
+        "assert(addressList_getCount() == 1)\n"
+        "assert(getTableEntry(0).Description == 'Ammo')\n"
+        "assert(addressList_removeEntry(99) == false)\n"
+        "addressList_clear()\n"
+        "assert(addressList_getCount() == 0)\n");
+
+    printf("  getTableEntry/setTableEntry/addressList: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_lua_process_bindings(pid_t pid) {
     printf("\n── Test: Lua process bindings ──\n");
 
@@ -1662,6 +1689,7 @@ int main(int argc, char* argv[]) {
     test_lua_autoassemble_check();
     test_lua_utility_bindings();
     test_lua_hotkey_bindings();
+    test_lua_address_list_bindings();
     test_lua_process_bindings(targetPid);
     test_lua_memscan();
     test_binary_scan_bitmask();

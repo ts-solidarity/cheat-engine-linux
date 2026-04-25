@@ -908,6 +908,24 @@ static int l_debug_getThreadList(lua_State* L) {
 
 // ── Address list manipulation ──
 
+static void ensureLuaAddressList(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_lua_addresslist");
+    if (lua_istable(L, -1))
+        return;
+
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_addresslist");
+}
+
+static int luaAddressListIndex(lua_State* L, int arg) {
+    lua_Integer raw = luaL_checkinteger(L, arg);
+    if (raw < 0)
+        luaL_argerror(L, arg, "address list index must be non-negative");
+    return static_cast<int>(raw + 1); // CE-style zero-based index at API boundary.
+}
+
 static int l_addressList_getCount(lua_State* L) {
     // Stored as registry value by MainWindow
     lua_getfield(L, LUA_REGISTRYINDEX, "ce_addresslist_count");
@@ -916,8 +934,67 @@ static int l_addressList_getCount(lua_State* L) {
         return 1;
     }
     lua_pop(L, 1);
-    lua_pushinteger(L, 0);
+    ensureLuaAddressList(L);
+    lua_pushinteger(L, static_cast<lua_Integer>(lua_rawlen(L, -1)));
+    lua_remove(L, -2);
     return 1;
+}
+
+static int l_getTableEntry(lua_State* L) {
+    int index = luaAddressListIndex(L, 1);
+    ensureLuaAddressList(L);
+    lua_rawgeti(L, -1, index);
+    lua_remove(L, -2);
+    return 1;
+}
+
+static int l_setTableEntry(lua_State* L) {
+    int index = luaAddressListIndex(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    ensureLuaAddressList(L);
+    lua_pushvalue(L, 2);
+    lua_rawseti(L, -2, index);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_addressList_addEntry(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    ensureLuaAddressList(L);
+    auto index = static_cast<lua_Integer>(lua_rawlen(L, -1) + 1);
+    lua_pushvalue(L, 1);
+    lua_rawseti(L, -2, index);
+    lua_pop(L, 1);
+    lua_pushinteger(L, index - 1);
+    return 1;
+}
+
+static int l_addressList_removeEntry(lua_State* L) {
+    int index = luaAddressListIndex(L, 1);
+    ensureLuaAddressList(L);
+    auto count = static_cast<int>(lua_rawlen(L, -1));
+    if (index > count) {
+        lua_pop(L, 1);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    for (int i = index; i < count; ++i) {
+        lua_rawgeti(L, -1, i + 1);
+        lua_rawseti(L, -2, i);
+    }
+    lua_pushnil(L);
+    lua_rawseti(L, -2, count);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_addressList_clear(lua_State* L) {
+    lua_newtable(L);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_addresslist");
+    return 0;
 }
 
 // ── Additional CE-compatible functions ──
@@ -1396,6 +1473,11 @@ void registerExtendedBindings(lua_State* L) {
 
     // Address list
     lua_register(L, "addressList_getCount", l_addressList_getCount);
+    lua_register(L, "addressList_addEntry", l_addressList_addEntry);
+    lua_register(L, "addressList_removeEntry", l_addressList_removeEntry);
+    lua_register(L, "addressList_clear", l_addressList_clear);
+    lua_register(L, "getTableEntry", l_getTableEntry);
+    lua_register(L, "setTableEntry", l_setTableEntry);
 
     // Process
     lua_register(L, "openProcess", l_openProcess);
