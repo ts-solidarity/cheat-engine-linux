@@ -998,6 +998,51 @@ static void test_same_as_first_scan() {
     printf("  same as first: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_pointer_type_scan() {
+    printf("\n── Test: Pointer type scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  pointer scan: FAILED\n");
+        return;
+    }
+
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* pointerSlot = reinterpret_cast<uintptr_t*>(page);
+    *pointerSlot = base + 128;
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig config;
+    config.valueType = ValueType::Pointer;
+    config.compareType = ScanCompare::Exact;
+    config.intValue = static_cast<int64_t>(base + 128);
+    config.alignment = sizeof(uintptr_t);
+    config.startAddress = base;
+    config.stopAddress = base + pageSize;
+
+    auto first = scanner.firstScan(proc, config);
+
+    *pointerSlot = base + 256;
+    config.intValue = static_cast<int64_t>(base + 256);
+    auto next = scanner.nextScan(proc, config, first);
+
+    uintptr_t stored = 0;
+    if (next.count() > 0)
+        next.value(0, &stored, sizeof(stored));
+
+    bool ok = first.count() == 1 && first.address(0) == base &&
+        next.count() == 1 && next.address(0) == base &&
+        stored == base + 256;
+
+    munmap(page, pageSize);
+
+    printf("  pointer scan: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_float_rounding_scan() {
     printf("\n── Test: Float rounding scan ──\n");
 
@@ -1220,6 +1265,7 @@ int main(int argc, char* argv[]) {
     test_all_types_scan();
     test_percentage_scan();
     test_same_as_first_scan();
+    test_pointer_type_scan();
     test_float_rounding_scan();
     test_process_enumeration();
     test_process_memory(targetPid);

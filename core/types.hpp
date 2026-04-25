@@ -94,6 +94,7 @@ enum class ValueType {
     All,         // Scan all numeric types simultaneously
     Grouped,     // Multiple values at offsets in one pass
     Custom,      // Lua-defined type
+    Pointer,     // Native pointer-sized integer
 };
 
 // ── Scan comparison ──

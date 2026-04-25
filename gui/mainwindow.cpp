@@ -312,7 +312,7 @@ void MainWindow::setupUi() {
 
     // Value type
     valueTypeCombo_ = new QComboBox;
-    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary", "All Types"});
+    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary", "All Types", "Pointer"});
     valueTypeCombo_->setCurrentIndex(2); // 4 Bytes default
     rightLayout->addWidget(valueTypeCombo_);
 
@@ -570,6 +570,7 @@ static ValueType mapValueType(int index) {
         case 8: return ValueType::ByteArray;
         case 9: return ValueType::Binary;
         case 10: return ValueType::All;
+        case 11: return ValueType::Pointer;
         default: return ValueType::Int32;
     }
 }
@@ -611,6 +612,8 @@ void MainWindow::onFirstScan() {
         config.alignment = 1;
     } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
         config.floatValue = text.toDouble();
+    } else if (config.valueType == ValueType::Pointer) {
+        config.intValue = static_cast<int64_t>(text.toULongLong(nullptr, 0));
     } else if (config.valueType == ValueType::All) {
         config.intValue = text.toLongLong();
         config.floatValue = text.toDouble();
@@ -651,6 +654,8 @@ void MainWindow::onNextScan() {
         config.alignment = 1;
     } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
         config.floatValue = text.toDouble();
+    } else if (config.valueType == ValueType::Pointer) {
+        config.intValue = static_cast<int64_t>(text.toULongLong(nullptr, 0));
     } else if (config.valueType == ValueType::All) {
         config.intValue = text.toLongLong();
         config.floatValue = text.toDouble();
@@ -776,6 +781,7 @@ void MainWindow::onSaveTable() {
             else if (typeStr == "i16") e.type = ValueType::Int16;
             else if (typeStr == "i32") e.type = ValueType::Int32;
             else if (typeStr == "i64") e.type = ValueType::Int64;
+            else if (typeStr == "pointer") e.type = ValueType::Pointer;
             else if (typeStr == "float") e.type = ValueType::Float;
             else if (typeStr == "double") e.type = ValueType::Double;
             else e.type = ValueType::Int32;
@@ -958,6 +964,7 @@ QVariant ScanResultsModel::data(const QModelIndex& index, int role) const {
             case ValueType::Int16:  vs = 2; break;
             case ValueType::Int32:  vs = 4; break;
             case ValueType::Int64:  vs = 8; break;
+            case ValueType::Pointer: vs = sizeof(uintptr_t); break;
             case ValueType::Float:  vs = 4; break;
             case ValueType::Double: vs = 8; break;
             default: break;
@@ -970,6 +977,7 @@ QVariant ScanResultsModel::data(const QModelIndex& index, int role) const {
             case ValueType::Int16:  { int16_t v; memcpy(&v, buf, 2); return QString::number(v); }
             case ValueType::Int32:  { int32_t v; memcpy(&v, buf, 4); return QString::number(v); }
             case ValueType::Int64:  { int64_t v; memcpy(&v, buf, 8); return QString::number(v); }
+            case ValueType::Pointer:{ uintptr_t v; memcpy(&v, buf, sizeof(v)); return QString("0x%1").arg(v, 0, 16); }
             case ValueType::Float:  { float v; memcpy(&v, buf, 4); return QString::number(v, 'f', 4); }
             case ValueType::Double: { double v; memcpy(&v, buf, 8); return QString::number(v, 'f', 6); }
             default: return "?";
@@ -1014,6 +1022,7 @@ static const char* typeToStr(ValueType vt) {
         case ValueType::Int16:  return "i16";
         case ValueType::Int32:  return "i32";
         case ValueType::Int64:  return "i64";
+        case ValueType::Pointer: return "pointer";
         case ValueType::Float:  return "float";
         case ValueType::Double: return "double";
         default: return "i32";
@@ -1025,6 +1034,7 @@ static ValueType strToType(const QString& s) {
     if (s == "i16")    return ValueType::Int16;
     if (s == "i32")    return ValueType::Int32;
     if (s == "i64")    return ValueType::Int64;
+    if (s == "pointer") return ValueType::Pointer;
     if (s == "float")  return ValueType::Float;
     if (s == "double") return ValueType::Double;
     bool ok = false;
@@ -1041,6 +1051,7 @@ static ValueType strToType(const QString& s) {
             case 8: return ValueType::ByteArray;
             case 9: return ValueType::Binary;
             case 10: return ValueType::All;
+            case 13: return ValueType::Pointer;
             default: break;
         }
     }
@@ -1093,6 +1104,7 @@ static size_t vtSize(ValueType vt) {
         case ValueType::Int16:  return 2;
         case ValueType::Int32:  return 4;
         case ValueType::Int64:  return 8;
+        case ValueType::Pointer: return sizeof(uintptr_t);
         case ValueType::Float:  return 4;
         case ValueType::Double: return 8;
         default: return 4;
@@ -1107,6 +1119,7 @@ static void writeValueToProcess(ProcessHandle* proc, uintptr_t addr, ValueType t
         case ValueType::Int16:  { int16_t v = valStr.toShort(); memcpy(buf, &v, 2); break; }
         case ValueType::Int32:  { int32_t v = valStr.toInt(); memcpy(buf, &v, 4); break; }
         case ValueType::Int64:  { int64_t v = valStr.toLongLong(); memcpy(buf, &v, 8); break; }
+        case ValueType::Pointer:{ uintptr_t v = valStr.toULongLong(nullptr, 0); memcpy(buf, &v, sizeof(v)); break; }
         case ValueType::Float:  { float v = valStr.toFloat(); memcpy(buf, &v, 4); break; }
         case ValueType::Double: { double v = valStr.toDouble(); memcpy(buf, &v, 8); break; }
         default: break;
@@ -1133,6 +1146,9 @@ static bool readComparableValue(ProcessHandle* proc, uintptr_t addr, ValueType t
         case ValueType::Int64: {
             int64_t v; memcpy(&v, buf, 8); value = static_cast<double>(v); return true;
         }
+        case ValueType::Pointer: {
+            uintptr_t v; memcpy(&v, buf, sizeof(v)); value = static_cast<double>(v); return true;
+        }
         case ValueType::Float: {
             float v; memcpy(&v, buf, 4); value = v; return true;
         }
@@ -1152,6 +1168,9 @@ static bool parseComparableValue(ValueType type, const QString& valStr, double& 
         case ValueType::Int32:
         case ValueType::Int64:
             value = valStr.toLongLong(&ok);
+            return ok;
+        case ValueType::Pointer:
+            value = static_cast<double>(valStr.toULongLong(&ok, 0));
             return ok;
         case ValueType::Float:
         case ValueType::Double:
@@ -1356,6 +1375,7 @@ void AddressListModel::updateValues(ProcessHandle* proc) {
                 case ValueType::Int16:  { int16_t v; memcpy(&v, buf, 2); e.currentValue = QString::number(v); break; }
                 case ValueType::Int32:  { int32_t v; memcpy(&v, buf, 4); e.currentValue = QString::number(v); break; }
                 case ValueType::Int64:  { int64_t v; memcpy(&v, buf, 8); e.currentValue = QString::number(v); break; }
+                case ValueType::Pointer:{ uintptr_t v; memcpy(&v, buf, sizeof(v)); e.currentValue = QString("0x%1").arg(v, 0, 16); break; }
                 case ValueType::Float:  { float v; memcpy(&v, buf, 4); e.currentValue = QString::number(v, 'f', 4); break; }
                 case ValueType::Double: { double v; memcpy(&v, buf, 8); e.currentValue = QString::number(v, 'f', 6); break; }
                 default: e.currentValue = "?"; break;
@@ -1411,6 +1431,7 @@ QVariant AddressListModel::data(const QModelIndex& index, int role) const {
                 case ValueType::Int16:  return "2 Bytes";
                 case ValueType::Int32:  return "4 Bytes";
                 case ValueType::Int64:  return "8 Bytes";
+                case ValueType::Pointer: return "Pointer";
                 case ValueType::Float:  return "Float";
                 case ValueType::Double: return "Double";
                 default: return "?";

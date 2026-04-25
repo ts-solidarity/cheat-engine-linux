@@ -896,6 +896,7 @@ static void registerConstants(lua_State* L) {
     lua_pushinteger(L, 8); lua_setglobal(L, "vtByteArray");
     lua_pushinteger(L, 9); lua_setglobal(L, "vtBinary");
     lua_pushinteger(L, 10); lua_setglobal(L, "vtAll");
+    lua_pushinteger(L, static_cast<int>(ValueType::Pointer)); lua_setglobal(L, "vtPointer");
 
     // Breakpoint types
     lua_pushinteger(L, 0); lua_setglobal(L, "bptExecute");

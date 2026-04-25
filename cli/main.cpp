@@ -40,7 +40,7 @@ static void usage() {
         "  regions <pid>                 List memory regions\n"
         "\n"
         "Scan options:\n"
-        "  --type <type>     byte, i16, i32, i64, float, double, string, unicode, aob, binary, all (default: i32)\n"
+        "  --type <type>     byte, i16, i32, i64, pointer, float, double, string, unicode, aob, binary, all (default: i32)\n"
         "  --value <val>     Value to search for\n"
         "  --value2 <val>    Second value (for 'between')\n"
         "  --compare <cmp>   exact, greater, less, between, changed,\n"
@@ -54,7 +54,7 @@ static void usage() {
         "  --writable        Only scan writable memory\n"
         "\n"
         "Write options:\n"
-        "  --type <type>     byte, i16, i32, i64, float, double (default: i32)\n"
+        "  --type <type>     byte, i16, i32, i64, pointer, float, double (default: i32)\n"
     );
 }
 
@@ -63,6 +63,7 @@ static ValueType parseType(const char* s) {
     if (!strcmp(s, "i16"))    return ValueType::Int16;
     if (!strcmp(s, "i32"))    return ValueType::Int32;
     if (!strcmp(s, "i64"))    return ValueType::Int64;
+    if (!strcmp(s, "pointer") || !strcmp(s, "ptr")) return ValueType::Pointer;
     if (!strcmp(s, "float"))  return ValueType::Float;
     if (!strcmp(s, "double")) return ValueType::Double;
     if (!strcmp(s, "string")) return ValueType::String;
@@ -104,6 +105,7 @@ static size_t typeSize(ValueType vt) {
         case ValueType::Int16:  return 2;
         case ValueType::Int32:  return 4;
         case ValueType::Int64:  return 8;
+        case ValueType::Pointer: return sizeof(uintptr_t);
         case ValueType::Float:  return 4;
         case ValueType::Double: return 8;
         default: return 4;
@@ -186,6 +188,7 @@ static int cmd_write(pid_t pid, uintptr_t addr, const char* valStr, ValueType vt
         case ValueType::Int16:  { int16_t v = atoi(valStr); memcpy(buf, &v, 2); break; }
         case ValueType::Int32:  { int32_t v = atoi(valStr); memcpy(buf, &v, 4); break; }
         case ValueType::Int64:  { int64_t v = atoll(valStr); memcpy(buf, &v, 8); break; }
+        case ValueType::Pointer:{ uintptr_t v = strtoull(valStr, nullptr, 0); memcpy(buf, &v, sizeof(v)); break; }
         case ValueType::Float:  { float v = atof(valStr); memcpy(buf, &v, 4); break; }
         case ValueType::Double: { double v = atof(valStr); memcpy(buf, &v, 8); break; }
         default: break;
@@ -286,6 +289,9 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
             config.floatValue = atof(valueStr);
             if (value2Str) config.floatValue2 = atof(value2Str);
+        } else if (config.valueType == ValueType::Pointer) {
+            config.intValue = static_cast<int64_t>(strtoull(valueStr, nullptr, 0));
+            if (value2Str) config.intValue2 = static_cast<int64_t>(strtoull(value2Str, nullptr, 0));
         } else if (config.valueType == ValueType::All) {
             config.intValue = atoll(valueStr);
             config.floatValue = atof(valueStr);
@@ -327,6 +333,7 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
             printf("  0x%lx = ", addr);
             switch (config.valueType) {
                 case ValueType::Int32: { int32_t v; memcpy(&v, val, 4); printf("%d", v); break; }
+                case ValueType::Pointer: { uintptr_t v; memcpy(&v, val, sizeof(v)); printf("0x%lx", v); break; }
                 case ValueType::Float: { float v; memcpy(&v, val, 4); printf("%f", v); break; }
                 default: {
                     for (size_t j = 0; j < vs; ++j) printf("%02x", val[j]);
@@ -351,6 +358,7 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
             printf("  0x%lx = ", addr);
             switch (config.valueType) {
                 case ValueType::Int32: { int32_t v; memcpy(&v, val, 4); printf("%d", v); break; }
+                case ValueType::Pointer: { uintptr_t v; memcpy(&v, val, sizeof(v)); printf("0x%lx", v); break; }
                 case ValueType::Float: { float v; memcpy(&v, val, 4); printf("%f", v); break; }
                 default: {
                     for (size_t j = 0; j < vs; ++j) printf("%02x", val[j]);

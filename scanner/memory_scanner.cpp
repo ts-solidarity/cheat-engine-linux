@@ -21,6 +21,7 @@ size_t MemoryScanner::valueSizeFor(ValueType vt) {
         case ValueType::Int16:   return 2;
         case ValueType::Int32:   return 4;
         case ValueType::Int64:   return 8;
+        case ValueType::Pointer: return sizeof(uintptr_t);
         case ValueType::Float:   return 4;
         case ValueType::Double:  return 8;
         default:                 return 4;
@@ -323,6 +324,7 @@ size_t valueSizeForConfig(const ScanConfig& config) {
         case ValueType::Float:
             return 4;
         case ValueType::Int64:
+        case ValueType::Pointer:
         case ValueType::Double:
             return 8;
         default:
@@ -622,6 +624,10 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
             case ValueType::Int64:
                 scanBuffer<int64_t>(buf, bytesRead, base, config.alignment,
                     config.intValue, config.intValue2, getCompare<int64_t>(config.compareType), res); break;
+            case ValueType::Pointer:
+                scanBuffer<uintptr_t>(buf, bytesRead, base, config.alignment,
+                    static_cast<uintptr_t>(config.intValue), static_cast<uintptr_t>(config.intValue2),
+                    getCompare<uintptr_t>(config.compareType), res); break;
             case ValueType::Float:
                 scanBufferFloating<float>(buf, bytesRead, base, config.alignment, config, res); break;
             case ValueType::Double:
@@ -817,6 +823,9 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                 }
                 case ValueType::Int64:
                     match = compareNextNumeric<int64_t>(config, currentVal.data(), compareVal);
+                    break;
+                case ValueType::Pointer:
+                    match = compareNextNumeric<uintptr_t>(config, currentVal.data(), compareVal);
                     break;
                 case ValueType::Float: {
                     match = compareNextNumeric<float>(config, currentVal.data(), compareVal);
