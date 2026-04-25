@@ -43,7 +43,7 @@
 - [x] Percentage-based comparisons (increased by %, between %)
 - [x] Float rounding options (rounded, truncated, extreme)
 - [x] Unicode string scan (separate from UTF-8)
-- [ ] Codepage-aware string scan
+- [x] Codepage-aware string scan
 - [x] "Same as first scan" comparison
 - [x] Pointer-type scan
 
@@ -119,6 +119,8 @@ Note: grouped scans are implemented for CLI/GUI/Lua with `type:value@offset` ter
 Note: custom Lua formula scans (`soCustom`) are implemented with per-result Lua predicates over raw value bytes (`current`/`old`), exposed in CLI/Lua and covered by regression tests.
 
 Note: grouped/custom scan results preserve their dynamic value sizes in the GUI result table and undo flow.
+
+Note: codepage-aware string scans use `iconv` to convert UTF-8 search text into a selected single-byte target encoding, exposed through CLI `--encoding`, GUI text encoding choices, and Lua optional scan arguments.
 
 ### Tier 2 — Important for Power Users (~6K lines, 3-4 weeks)
 

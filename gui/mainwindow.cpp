@@ -392,6 +392,11 @@ void MainWindow::setupUi() {
     percentValue2Edit_->setValidator(new QDoubleValidator(0.0, 1000000.0, 4, percentValue2Edit_));
     optLayout->addWidget(percentValue2Edit_, 6, 1);
 
+    optLayout->addWidget(new QLabel("Text encoding:"), 7, 0);
+    stringEncodingCombo_ = new QComboBox;
+    stringEncodingCombo_->addItems({"UTF-8", "ISO-8859-1", "CP1252"});
+    optLayout->addWidget(stringEncodingCombo_, 7, 1);
+
     auto updatePercentUi = [this, percent2Label]() {
         bool enabled = percentCheck_->isChecked();
         bool needsUpper = enabled && mapScanType(scanTypeCombo_->currentIndex()) == ScanCompare::Between;
@@ -608,7 +613,7 @@ static size_t resultValueSizeForConfig(const ScanConfig& config) {
         case ValueType::Pointer:
             return 8;
         case ValueType::String:
-            return std::max<size_t>(1, config.stringValue.size());
+            return std::max<size_t>(1, config.stringValueSize());
         case ValueType::UnicodeString:
             return std::max<size_t>(2, config.stringValue.size() * 2);
         case ValueType::ByteArray:
@@ -640,6 +645,8 @@ void MainWindow::onFirstScan() {
     auto text = scanValueEdit_->text();
     if (config.valueType == ValueType::String || config.valueType == ValueType::UnicodeString) {
         config.stringValue = text.toStdString();
+        if (config.valueType == ValueType::String)
+            config.stringEncoding = stringEncodingCombo_->currentText().toStdString();
         config.alignment = 1;
     } else if (config.valueType == ValueType::ByteArray) {
         config.parseAOB(text.toStdString());
@@ -698,6 +705,8 @@ void MainWindow::onNextScan() {
     auto text = scanValueEdit_->text();
     if (config.valueType == ValueType::String || config.valueType == ValueType::UnicodeString) {
         config.stringValue = text.toStdString();
+        if (config.valueType == ValueType::String)
+            config.stringEncoding = stringEncodingCombo_->currentText().toStdString();
         config.alignment = 1;
     } else if (config.valueType == ValueType::ByteArray) {
         config.parseAOB(text.toStdString());

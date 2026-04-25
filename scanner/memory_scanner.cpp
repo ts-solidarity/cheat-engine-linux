@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <iconv.h>
 
 extern "C" {
 #include <lua.h>
@@ -110,6 +111,45 @@ bool parseSizeToken(const std::string& text, size_t& out) {
         return false;
     out = static_cast<size_t>(parsed);
     return true;
+}
+
+bool isUtf8Encoding(const std::string& encoding) {
+    auto normalized = lowerCopy(trimCopy(encoding));
+    return normalized.empty() || normalized == "utf8" || normalized == "utf-8";
+}
+
+std::vector<uint8_t> encodeStringBytes(const std::string& text, const std::string& encoding) {
+    if (isUtf8Encoding(encoding))
+        return {text.begin(), text.end()};
+
+    iconv_t cd = iconv_open(encoding.c_str(), "UTF-8");
+    if (cd == reinterpret_cast<iconv_t>(-1))
+        throw std::invalid_argument("unsupported string encoding: " + encoding);
+
+    size_t inLeft = text.size();
+    char* inPtr = const_cast<char*>(text.data());
+    std::vector<uint8_t> out(std::max<size_t>(16, text.size() * 4 + 8));
+    char* outPtr = reinterpret_cast<char*>(out.data());
+    size_t outLeft = out.size();
+
+    while (true) {
+        size_t converted = iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft);
+        if (converted != static_cast<size_t>(-1))
+            break;
+        if (errno != E2BIG) {
+            iconv_close(cd);
+            throw std::invalid_argument("string encoding conversion failed for " + encoding);
+        }
+
+        size_t used = out.size() - outLeft;
+        out.resize(out.size() * 2);
+        outPtr = reinterpret_cast<char*>(out.data() + used);
+        outLeft = out.size() - used;
+    }
+
+    out.resize(out.size() - outLeft);
+    iconv_close(cd);
+    return out;
 }
 
 template<typename T>
@@ -242,15 +282,14 @@ void scanBuffer(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
 
 /// Scan buffer for a string (exact substring match).
 void scanBufferString(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
-                      const std::string& needle, ScanResult& result)
+                      const std::vector<uint8_t>& needle, ScanResult& result)
 {
     if (needle.empty() || bufSize < needle.size()) return;
-    const uint8_t* n = (const uint8_t*)needle.data();
     size_t nLen = needle.size();
     size_t limit = bufSize - nLen + 1;
 
     for (size_t offset = 0; offset < limit; ++offset) {
-        if (std::memcmp(buf + offset, n, nLen) == 0) {
+        if (std::memcmp(buf + offset, needle.data(), nLen) == 0) {
             result.addResult(baseAddr + offset, buf + offset, nLen);
         }
     }
@@ -512,7 +551,7 @@ void scanBufferGrouped(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
 size_t valueSizeForConfig(const ScanConfig& config) {
     switch (config.valueType) {
         case ValueType::String:
-            return std::max<size_t>(1, config.stringValue.size());
+            return std::max<size_t>(1, config.stringValueSize());
         case ValueType::UnicodeString:
             return std::max<size_t>(2, config.stringValue.size() * 2);
         case ValueType::ByteArray:
@@ -684,6 +723,10 @@ void ScanConfig::parseBinary(const std::string& pattern) {
     byteArrayMask.resize(byteMask.size());
     for (size_t i = 0; i < byteMask.size(); ++i)
         byteArrayMask[i] = byteMask[i] != 0;
+}
+
+size_t ScanConfig::stringValueSize() const {
+    return encodeStringBytes(stringValue, stringEncoding).size();
 }
 
 bool ScanConfig::parseGrouped(const std::string& expression, std::string* error) {
@@ -1027,7 +1070,8 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
             case ValueType::Double:
                 scanBufferFloating<double>(buf, bytesRead, base, config.alignment, config, res); break;
             case ValueType::String:
-                scanBufferString(buf, bytesRead, base, config.stringValue, res); break;
+                scanBufferString(buf, bytesRead, base,
+                    encodeStringBytes(config.stringValue, config.stringEncoding), res); break;
             case ValueType::UnicodeString:
                 scanBufferUnicode(buf, bytesRead, base, config.stringValue, res); break;
             case ValueType::ByteArray:
@@ -1203,6 +1247,9 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
     }
 
     size_t valueSize = valueSizeForConfig(config);
+    std::vector<uint8_t> stringNeedle;
+    if (config.valueType == ValueType::String && config.compareType == ScanCompare::Exact)
+        stringNeedle = encodeStringBytes(config.stringValue, config.stringEncoding);
     auto resultDir = makeScanDir();
     ScanResult result(resultDir / "results");
 
@@ -1284,8 +1331,8 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                                  config.compareType == ScanCompare::Increased ||
                                  config.compareType == ScanCompare::Decreased);
                     } else if (config.compareType == ScanCompare::Exact) {
-                        match = config.stringValue.size() == valueSize &&
-                                std::memcmp(currentVal.data(), config.stringValue.data(), valueSize) == 0;
+                        match = stringNeedle.size() == valueSize &&
+                                std::memcmp(currentVal.data(), stringNeedle.data(), valueSize) == 0;
                     } else if (config.compareType == ScanCompare::Unknown) {
                         match = true;
                     }

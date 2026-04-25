@@ -93,6 +93,7 @@ private:
     QLineEdit* percentValueEdit_;
     QLineEdit* percentValue2Edit_;
     QLineEdit* floatToleranceEdit_;
+    QComboBox* stringEncodingCombo_;
 
     // Results
     QTableView* resultsView_;

@@ -642,6 +642,8 @@ static ScanConfig luaScanConfig(lua_State* L, int scanTypeIndex, int valueTypeIn
     cfg.alignment = (size_t)std::max<lua_Integer>(1, luaL_optinteger(L, valueIndex + 3, 4));
     cfg.startAddress = (uintptr_t)luaL_optinteger(L, valueIndex + 1, cfg.startAddress);
     cfg.stopAddress = (uintptr_t)luaL_optinteger(L, valueIndex + 2, cfg.stopAddress);
+    if (lua_isstring(L, valueIndex + 4))
+        cfg.stringEncoding = lua_tostring(L, valueIndex + 4);
 
     if (customFormula)
         cfg.valueType = ValueType::Custom;

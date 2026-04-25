@@ -43,6 +43,7 @@ static void usage() {
         "  --type <type>     byte, i16, i32, i64, pointer, float, double, string, unicode, aob, binary, all, grouped, custom (default: i32)\n"
         "  --value <val>     Value to search for\n"
         "  --value2 <val>    Second value (for 'between')\n"
+        "  --encoding <enc>  String encoding/codepage for --type string (e.g. UTF-8, ISO-8859-1, CP1252)\n"
         "  --value-size <n>  Custom value byte size (for --type custom, default: 4)\n"
         "                    grouped --value format: type:value@offset;type:value@offset\n"
         "                    custom --value must be a Lua chunk returning true/false\n"
@@ -248,11 +249,13 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
     const char* roundingStr = nullptr;
     const char* toleranceStr = nullptr;
     const char* valueSizeStr = nullptr;
+    const char* encodingStr = nullptr;
 
     static struct option long_opts[] = {
         {"type",     required_argument, nullptr, 't'},
         {"value",    required_argument, nullptr, 'v'},
         {"value2",   required_argument, nullptr, '2'},
+        {"encoding", required_argument, nullptr, 'e'},
         {"value-size", required_argument, nullptr, 's'},
         {"compare",  required_argument, nullptr, 'c'},
         {"previous", required_argument, nullptr, 'p'},
@@ -267,11 +270,12 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
 
     optind = 1; // reset getopt
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:v:2:s:c:p:P:q:r:T:a:w", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:v:2:e:s:c:p:P:q:r:T:a:w", long_opts, nullptr)) != -1) {
         switch (opt) {
             case 't': config.valueType = parseType(optarg); break;
             case 'v': valueStr = optarg; break;
             case '2': value2Str = optarg; break;
+            case 'e': encodingStr = optarg; break;
             case 's': valueSizeStr = optarg; break;
             case 'c': config.compareType = parseCompare(optarg); break;
             case 'p': previousDir = optarg; break;
@@ -286,6 +290,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
 
     if (valueSizeStr)
         config.customValueSize = std::max<size_t>(1, strtoull(valueSizeStr, nullptr, 0));
+    if (encodingStr)
+        config.stringEncoding = encodingStr;
 
     if (valueStr) {
         if (config.valueType == ValueType::String || config.valueType == ValueType::UnicodeString) {

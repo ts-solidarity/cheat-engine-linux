@@ -833,6 +833,46 @@ static void test_unicode_string_scan() {
     printf("  UTF-16LE match: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_codepage_string_scan() {
+    printf("\n── Test: Codepage string scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  ISO-8859-1 match: FAILED\n");
+        return;
+    }
+
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+    std::memset(bytes, 0, pageSize);
+    bytes[32] = 0xe9; // U+00E9 encoded as ISO-8859-1.
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig config;
+    config.valueType = ValueType::String;
+    config.compareType = ScanCompare::Exact;
+    config.stringValue = "\xc3\xa9"; // U+00E9 in UTF-8 source text.
+    config.stringEncoding = "ISO-8859-1";
+    config.alignment = 1;
+    config.startAddress = base;
+    config.stopAddress = base + pageSize;
+
+    auto result = scanner.firstScan(proc, config);
+    bool ok = result.count() == 1 && result.address(0) == base + 32;
+
+    ScanConfig next = config;
+    auto nextResult = scanner.nextScan(proc, next, result);
+    ok = ok && nextResult.count() == 1 && nextResult.address(0) == base + 32;
+
+    munmap(page, pageSize);
+
+    printf("  ISO-8859-1 match: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_all_types_scan() {
     printf("\n── Test: All types scan ──\n");
 
@@ -1425,6 +1465,7 @@ int main(int argc, char* argv[]) {
     test_lua_memscan();
     test_binary_scan_bitmask();
     test_unicode_string_scan();
+    test_codepage_string_scan();
     test_all_types_scan();
     test_grouped_scan();
     test_custom_formula_scan();

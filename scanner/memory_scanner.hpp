@@ -45,6 +45,7 @@ struct ScanConfig {
     double      floatValue   = 0;
     double      floatValue2  = 0;
     std::string stringValue;
+    std::string stringEncoding;      // Empty/UTF-8 = raw UTF-8 bytes, otherwise iconv target encoding
     std::vector<uint8_t> byteArray;
     std::vector<bool> byteArrayMask; // true = must match, false = wildcard (??)
     std::vector<uint8_t> byteMask;   // Bit mask for binary scans: 1 bits must match
@@ -59,6 +60,9 @@ struct ScanConfig {
 
     /// Parse a binary pattern like "0110??01" into byteArray + mask
     void parseBinary(const std::string& pattern);
+
+    /// Encoded byte length of stringValue for ValueType::String scans.
+    size_t stringValueSize() const;
 
     /// Parse grouped expressions like "i32:100@0;float:1.5@4;byte:7@8".
     bool parseGrouped(const std::string& expression, std::string* error = nullptr);
