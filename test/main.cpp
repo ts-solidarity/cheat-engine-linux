@@ -382,6 +382,40 @@ static void test_autoassembler_loadbinary(pid_t pid) {
     printf("  loadbinary: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_loadlibrary(pid_t pid) {
+    printf("\n── Test: AutoAssembler loadlibrary ──\n");
+
+    auto exePath = std::filesystem::read_symlink("/proc/self/exe");
+    auto libraryPath = exePath.parent_path() / "libspeedhack.so";
+    if (!std::filesystem::exists(libraryPath)) {
+        printf("  loadlibrary: SKIPPED (libspeedhack.so not found)\n");
+        return;
+    }
+
+    char script[1024];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "loadlibrary(\"%s\")\n",
+        libraryPath.c_str());
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+    auto result = aa.execute(proc, script);
+
+    bool sawLog = false;
+    for (const auto& line : result.log) {
+        if (line.find("LOADLIBRARY: ") == 0) {
+            sawLog = true;
+            break;
+        }
+    }
+
+    bool ok = result.success && sawLog;
+    printf("  loadlibrary: %s\n", ok ? "OK" : "FAILED");
+    if (!ok && !result.error.empty())
+        printf("    error: %s\n", result.error.c_str());
+}
+
 static void test_autoassembler_aobscanmodule(pid_t pid) {
     printf("\n── Test: AutoAssembler aobscanmodule ──\n");
 
@@ -1071,6 +1105,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_nop_fillmem(targetPid);
     test_autoassembler_ds(targetPid);
     test_autoassembler_loadbinary(targetPid);
+    test_autoassembler_loadlibrary(targetPid);
     test_autoassembler_aobscanmodule(targetPid);
     test_autoassembler_aobscanregion(targetPid);
     test_autoassembler_aobscanall(targetPid);

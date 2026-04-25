@@ -1,10 +1,13 @@
 #include "core/autoasm.hpp"
 #include "arch/disassembler.hpp"
+#include "platform/linux/injector.hpp"
+#include "symbols/elf_symbols.hpp"
 #include <sstream>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <regex>
 #include <string_view>
 #include <vector>
@@ -530,6 +533,13 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         return;
     }
 
+    // LOADLIBRARY(path) — dlopen a shared object inside the target process.
+    if (startsWith(upper, "LOADLIBRARY(") && line.back() == ')') {
+        auto args = trim(line.substr(12, line.size() - 13));
+        asmLines.push_back("__LOADLIBRARY__:" + args);
+        return;
+    }
+
     // FILLMEM(address, size, value)
     if (startsWith(upper, "FILLMEM(") && line.back() == ')') {
         auto args = trim(line.substr(8, line.size() - 9));
@@ -926,6 +936,29 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             }
 
             result.log.push_back("LOADBINARY: " + filename + " -> " + addrExpr);
+            continue;
+        }
+
+        if (startsWith(trimmedLine, "__LOADLIBRARY__:")) {
+            auto path = stripOptionalQuotes(trimmedLine.substr(16));
+            if (path.empty()) {
+                result.error = "LOADLIBRARY requires a shared library path";
+                return result;
+            }
+            if (!std::filesystem::exists(path)) {
+                result.error = "LOADLIBRARY file not found: " + path;
+                return result;
+            }
+
+            SymbolResolver resolver;
+            resolver.loadProcess(proc);
+            auto injectResult = os::injectLibrary(proc, resolver, path);
+            if (!injectResult) {
+                result.error = "LOADLIBRARY failed for " + path + ": " + injectResult.error();
+                return result;
+            }
+
+            result.log.push_back("LOADLIBRARY: " + path + " handle=0x" + formatHex(*injectResult));
             continue;
         }
 
