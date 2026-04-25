@@ -32,6 +32,10 @@ struct AutoAsmResult {
 /// The auto-assembler engine.
 class AutoAssembler {
 public:
+    using CustomCommandHandler = std::function<bool(const std::string& args,
+        std::vector<std::string>& outputLines, std::vector<std::string>& log,
+        std::string& error)>;
+
     AutoAssembler() = default;
 
     /// Execute an auto-assembler script (enable section).
@@ -48,6 +52,10 @@ public:
     void unregisterSymbol(const std::string& name);
     uintptr_t resolveSymbol(const std::string& name) const;
 
+    /// Register a parser extension command. Command names are case-insensitive.
+    void registerCommand(const std::string& name, CustomCommandHandler handler);
+    void unregisterCommand(const std::string& name);
+
 private:
     // ── Internal types ──
     struct Alloc { std::string name; size_t size; uintptr_t preferred; uintptr_t address; };
@@ -58,11 +66,11 @@ private:
 
     // ── Parsing ──
     std::string extractSection(const std::string& script, const std::string& section);
-    void parseLine(const std::string& line,
+    bool parseLine(const std::string& line,
         std::vector<Alloc>& allocs, std::vector<Label>& labels,
         std::vector<Define>& defines, std::vector<std::string>& registeredSymbols,
         std::vector<std::string>& asmLines, std::vector<std::string>& log,
-        ProcessHandle* proc);
+        ProcessHandle* proc, std::string& error);
 
     // ── Resolution ──
     uintptr_t resolveAddress(const std::string& expr,
@@ -75,6 +83,7 @@ private:
     // ── Global symbol table ──
     std::unordered_map<std::string, uintptr_t> globalSymbols_;
     std::unordered_map<std::string, DisableInfo::AllocEntry> knownAllocations_;
+    std::unordered_map<std::string, CustomCommandHandler> customCommands_;
     Assembler asm64_{AsmArch::X86_64};
 };
 

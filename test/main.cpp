@@ -499,6 +499,60 @@ static void test_autoassembler_ds(pid_t pid) {
     printf("  ds: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_custom_commands(pid_t pid) {
+    printf("\n── Test: AutoAssembler custom commands ──\n");
+
+    LinuxProcessHandle proc(pid);
+    auto allocResult = proc.allocate(4096, MemProt::All);
+    if (!allocResult) {
+        printf("  custom commands: FAILED\n");
+        return;
+    }
+    uintptr_t addr = *allocResult;
+
+    AutoAssembler aa;
+    aa.registerCommand("emitbytes", [](const std::string& args,
+        std::vector<std::string>& outputLines, std::vector<std::string>& log, std::string&) {
+        outputLines.push_back("db " + args);
+        log.push_back("custom emitbytes");
+        return true;
+    });
+    aa.registerCommand("emitnops", [](const std::string& args,
+        std::vector<std::string>& outputLines, std::vector<std::string>&, std::string&) {
+        outputLines.push_back("nop " + args);
+        return true;
+    });
+
+    char script[256];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "%lx:\n"
+        "EMITBYTES(2A, 2B)\n"
+        "emitnops 2\n",
+        addr);
+
+    auto result = aa.execute(proc, script);
+    uint8_t actual[4] = {};
+    proc.read(addr, actual, sizeof(actual));
+    const uint8_t expected[] = {0x2a, 0x2b, 0x90, 0x90};
+
+    AutoAssembler failing;
+    failing.registerCommand("failcmd", [](const std::string&, std::vector<std::string>&,
+        std::vector<std::string>&, std::string& error) {
+        error = "failcmd parse error";
+        return false;
+    });
+    auto failedCheck = failing.check("[ENABLE]\nfailcmd()\n");
+
+    bool ok = result.success &&
+        std::memcmp(actual, expected, sizeof(actual)) == 0 &&
+        !failedCheck.success &&
+        failedCheck.error == "failcmd parse error";
+
+    proc.free(addr, 4096);
+    printf("  custom commands: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_loadbinary(pid_t pid) {
     printf("\n── Test: AutoAssembler loadbinary ──\n");
 
@@ -1696,6 +1750,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_nop_fillmem(targetPid);
     test_autoassembler_ds(targetPid);
+    test_autoassembler_custom_commands(targetPid);
     test_autoassembler_loadbinary(targetPid);
     test_autoassembler_loadlibrary(targetPid);
     test_autoassembler_struct_definitions(targetPid);

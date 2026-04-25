@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <regex>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ce {
@@ -25,6 +26,10 @@ static std::string trim(const std::string& s) {
 static std::string toUpper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::toupper);
     return s;
+}
+
+static std::string normalizeCommandName(const std::string& name) {
+    return toUpper(trim(name));
 }
 
 static bool startsWith(const std::string& s, const std::string& prefix) {
@@ -392,19 +397,19 @@ std::string AutoAssembler::extractSection(const std::string& script, const std::
 
 // ── Line parsing ──
 
-void AutoAssembler::parseLine(const std::string& rawLine,
+bool AutoAssembler::parseLine(const std::string& rawLine,
     std::vector<Alloc>& allocs, std::vector<Label>& labels,
     std::vector<Define>& defines, std::vector<std::string>& registeredSymbols,
     std::vector<std::string>& asmLines, std::vector<std::string>& log,
-    ProcessHandle* proc)
+    ProcessHandle* proc, std::string& error)
 {
     auto line = trim(rawLine);
-    if (line.empty() || line[0] == '/' || line[0] == ';') return; // Comment
+    if (line.empty() || line[0] == '/' || line[0] == ';') return true; // Comment
 
     // Strip inline comments
     auto commentPos = line.find("//");
     if (commentPos != std::string::npos) line = trim(line.substr(0, commentPos));
-    if (line.empty()) return;
+    if (line.empty()) return true;
 
     auto upper = toUpper(line);
 
@@ -416,13 +421,13 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         a.address = 0;
         allocs.push_back(a);
         log.push_back("ALLOC: " + a.name + " size=" + std::to_string(a.size));
-        return;
+        return true;
     }
 
     if (startsWith(upper, "DEALLOC(") && line.back() == ')') {
         auto args = line.substr(8, line.size() - 9);
         asmLines.push_back("__DEALLOC__:" + args);
-        return;
+        return true;
     }
 
     // LABEL(name1, name2, ...)
@@ -436,7 +441,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
             l.address = 0;
             labels.push_back(l);
         }
-        return;
+        return true;
     }
 
     // DEFINE(name, value)
@@ -449,7 +454,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
             d.value = trim(args.substr(comma + 1));
             defines.push_back(d);
         }
-        return;
+        return true;
     }
 
     // REGISTERSYMBOL(name)
@@ -459,21 +464,21 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         std::string name;
         while (std::getline(ss, name, ','))
             registeredSymbols.push_back(trim(name));
-        return;
+        return true;
     }
 
     if (startsWith(upper, "UNREGISTERSYMBOL(") && line.back() == ')') {
         constexpr std::string_view prefix = "UNREGISTERSYMBOL(";
         auto args = line.substr(prefix.size(), line.size() - prefix.size() - 1);
         asmLines.push_back("__UNREGISTERSYMBOL__:" + args);
-        return;
+        return true;
     }
 
     // FULLACCESS(address, size) — make memory writable
     if (startsWith(upper, "FULLACCESS(") && line.back() == ')') {
         auto args = line.substr(11, line.size() - 12);
         asmLines.push_back("__FULLACCESS__:" + args);
-        return;
+        return true;
     }
 
     // ASSERT(address, bytes) — verify bytes at address before proceeding
@@ -486,7 +491,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
             log.push_back("ASSERT: " + addrExpr + " = " + bytesStr);
         }
         asmLines.push_back("__ASSERT__:" + args);
-        return;
+        return true;
     }
 
     // AOBSCANREGION(name, start, stop, pattern) — find pattern in an address range
@@ -502,7 +507,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
             auto stop = resolveAddress(stopExpr, allocs, labels, defines);
             if (!start || !stop || stop <= start) {
                 log.push_back("AOBSCANREGION: " + name + " invalid range");
-                return;
+                return true;
             }
 
             ScanConfig cfg;
@@ -520,7 +525,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
                 log.push_back("AOBSCANREGION: " + name + " NOT FOUND");
             }
         }
-        return;
+        return true;
     }
 
     // AOBSCANALL(name, pattern) — find pattern across all readable memory
@@ -549,7 +554,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
                 log.push_back("AOBSCANALL: " + name + " NOT FOUND");
             }
         }
-        return;
+        return true;
     }
 
     // AOBSCANMODULE(name, module, pattern) — find pattern inside one module
@@ -567,7 +572,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
             });
             if (moduleIt == modules.end()) {
                 log.push_back("AOBSCANMODULE: " + name + " module not found: " + moduleName);
-                return;
+                return true;
             }
 
             ScanConfig cfg;
@@ -586,7 +591,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
                 log.push_back("AOBSCANMODULE: " + name + " NOT FOUND in " + moduleIt->name);
             }
         }
-        return;
+        return true;
     }
 
     // AOBSCAN(name, pattern) — find pattern
@@ -617,7 +622,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
                 log.push_back("AOBSCAN: " + name + " NOT FOUND");
             }
         }
-        return;
+        return true;
     }
 
     // CREATETHREAD(address) — create remote thread at address after injection
@@ -626,7 +631,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         log.push_back("CREATETHREAD: " + addr + " (deferred to post-injection)");
         // Store for execution after all writes complete
         asmLines.push_back("__CREATETHREAD__:" + addr);
-        return;
+        return true;
     }
 
     // CREATETHREADANDWAIT(address[, timeout])
@@ -634,7 +639,7 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         auto args = trim(line.substr(20, line.size() - 21));
         log.push_back("CREATETHREADANDWAIT: " + args);
         asmLines.push_back("__CREATETHREADANDWAIT__:" + args);
-        return;
+        return true;
     }
 
     // INCLUDE(filename) — include another .cea script
@@ -647,65 +652,96 @@ void AutoAssembler::parseLine(const std::string& rawLine,
         std::ifstream incFile(filename);
         if (incFile) {
             std::string incLine;
-            while (std::getline(incFile, incLine))
-                parseLine(incLine, allocs, labels, defines, registeredSymbols, asmLines, log, proc);
+            while (std::getline(incFile, incLine)) {
+                if (!parseLine(incLine, allocs, labels, defines, registeredSymbols, asmLines, log, proc, error))
+                    return false;
+            }
             log.push_back("INCLUDE: " + filename + " (loaded)");
         } else {
             log.push_back("INCLUDE: " + filename + " (NOT FOUND)");
         }
-        return;
+        return true;
     }
 
     // REASSEMBLE(address) — disassemble instruction at address and re-emit it
     if (startsWith(upper, "REASSEMBLE(") && line.back() == ')' && proc) {
         auto addrExpr = trim(line.substr(11, line.size() - 12));
         asmLines.push_back("__REASSEMBLE__:" + addrExpr);
-        return;
+        return true;
     }
 
     // READMEM(address, size) — read bytes from process memory, emit as db
     if (startsWith(upper, "READMEM(") && line.back() == ')') {
         auto args = trim(line.substr(8, line.size() - 9));
         asmLines.push_back("__READMEM__:" + args);
-        return;
+        return true;
     }
 
     // LOADBINARY(address, filename)
     if (startsWith(upper, "LOADBINARY(") && line.back() == ')') {
         auto args = trim(line.substr(11, line.size() - 12));
         asmLines.push_back("__LOADBINARY__:" + args);
-        return;
+        return true;
     }
 
     // LOADLIBRARY(path) — dlopen a shared object inside the target process.
     if (startsWith(upper, "LOADLIBRARY(") && line.back() == ')') {
         auto args = trim(line.substr(12, line.size() - 13));
         asmLines.push_back("__LOADLIBRARY__:" + args);
-        return;
+        return true;
     }
 
     // FILLMEM(address, size, value)
     if (startsWith(upper, "FILLMEM(") && line.back() == ')') {
         auto args = trim(line.substr(8, line.size() - 9));
         asmLines.push_back("__FILLMEM__:" + args);
-        return;
+        return true;
     }
 
     // NOP [count] — emit one or more 0x90 bytes at the active address.
     if (upper == "NOP" || startsWith(upper, "NOP ")) {
         auto count = trim(line.size() > 3 ? line.substr(3) : "1");
         asmLines.push_back("__NOP__:" + count);
-        return;
+        return true;
     }
 
     // DS "text" — emit string bytes at the active address.
     if (startsWith(upper, "DS ")) {
         asmLines.push_back("__DS__:" + trim(line.substr(3)));
-        return;
+        return true;
+    }
+
+    std::string customName;
+    std::string customArgs;
+    auto openParen = line.find('(');
+    if (openParen != std::string::npos && line.back() == ')') {
+        customName = trim(line.substr(0, openParen));
+        customArgs = line.substr(openParen + 1, line.size() - openParen - 2);
+    } else {
+        auto firstSpace = line.find_first_of(" \t");
+        customName = firstSpace == std::string::npos ? line : trim(line.substr(0, firstSpace));
+        customArgs = firstSpace == std::string::npos ? "" : trim(line.substr(firstSpace + 1));
+    }
+
+    auto customIt = customCommands_.find(normalizeCommandName(customName));
+    if (customIt != customCommands_.end()) {
+        std::vector<std::string> expandedLines;
+        if (!customIt->second(customArgs, expandedLines, log, error)) {
+            if (error.empty())
+                error = "Custom command failed: " + customName;
+            return false;
+        }
+
+        for (const auto& expandedLine : expandedLines) {
+            if (!parseLine(expandedLine, allocs, labels, defines, registeredSymbols, asmLines, log, proc, error))
+                return false;
+        }
+        return true;
     }
 
     // Everything else is an assembly line or label definition
     asmLines.push_back(line);
+    return true;
 }
 
 // ── Symbol resolution ──
@@ -818,6 +854,17 @@ uintptr_t AutoAssembler::resolveSymbol(const std::string& name) const {
     return it != globalSymbols_.end() ? it->second : 0;
 }
 
+void AutoAssembler::registerCommand(const std::string& name, CustomCommandHandler handler) {
+    auto key = normalizeCommandName(name);
+    if (key.empty() || !handler)
+        return;
+    customCommands_[key] = std::move(handler);
+}
+
+void AutoAssembler::unregisterCommand(const std::string& name) {
+    customCommands_.erase(normalizeCommandName(name));
+}
+
 // ── Main execution ──
 
 AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& script) {
@@ -845,8 +892,10 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
 
     std::istringstream ss(enableCode);
     std::string line;
-    while (std::getline(ss, line))
-        parseLine(line, allocs, labels, defines, registeredSymbols, asmLines, result.log, &proc);
+    while (std::getline(ss, line)) {
+        if (!parseLine(line, allocs, labels, defines, registeredSymbols, asmLines, result.log, &proc, result.error))
+            return result;
+    }
 
     // ── Phase 2: Allocate memory ──
     for (auto& a : allocs) {
@@ -1345,8 +1394,10 @@ AutoAsmResult AutoAssembler::check(const std::string& script) {
 
     std::istringstream ss(enableCode);
     std::string line;
-    while (std::getline(ss, line))
-        parseLine(line, allocs, labels, defines, registeredSymbols, asmLines, result.log, nullptr);
+    while (std::getline(ss, line)) {
+        if (!parseLine(line, allocs, labels, defines, registeredSymbols, asmLines, result.log, nullptr, result.error))
+            return result;
+    }
 
     result.success = true;
     result.log.push_back("Syntax OK: " + std::to_string(allocs.size()) + " allocs, " +
