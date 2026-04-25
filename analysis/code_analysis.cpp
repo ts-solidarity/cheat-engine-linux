@@ -159,6 +159,16 @@ std::vector<CodeRef> CodeAnalyzer::findReferencedFunctions(ProcessHandle& proc, 
     return functions;
 }
 
+std::vector<CodeRef> CodeAnalyzer::findJumps(ProcessHandle& proc, const ModuleInfo& module) {
+    auto allRefs = dissectModule(proc, module);
+    std::vector<CodeRef> jumps;
+    for (auto& ref : allRefs) {
+        if (ref.type == RefType::Jump && ref.target)
+            jumps.push_back(ref);
+    }
+    return jumps;
+}
+
 std::vector<CodeRef> CodeAnalyzer::findRipRelativeInstructions(ProcessHandle& proc, const ModuleInfo& module) {
     auto allRefs = dissectModule(proc, module);
     std::vector<CodeRef> ripRefs;

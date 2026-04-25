@@ -157,6 +157,7 @@ static void test_code_analysis_references() {
     std::vector<uint8_t> code = {
         0x48, 0x8d, 0x05, 0xf9, 0x0f, 0x00, 0x00, // lea rax, [rip + 0xff9] -> 0x2000
         0xe8, 0xf4, 0x1f, 0x00, 0x00,             // call 0x3000
+        0xeb, 0x01,                                     // jmp 0x100f
         0xc3                                            // ret
     };
     code.insert(code.end(), 20, 0x00);
@@ -171,6 +172,7 @@ static void test_code_analysis_references() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(proc, module);
     auto functions = analyzer.findReferencedFunctions(proc, module);
+    auto jumps = analyzer.findJumps(proc, module);
     auto ripRelative = analyzer.findRipRelativeInstructions(proc, module);
     auto assembly = analyzer.findAssemblyPattern(proc, module, "ret");
     auto caves = analyzer.findCodeCaves(proc, module, 16);
@@ -179,13 +181,16 @@ static void test_code_analysis_references() {
         strings[0].target == stringBase && strings[0].text == "hello ce";
     bool functionOk = functions.size() == 1 && functions[0].address == codeBase + 7 &&
         functions[0].target == callTarget;
+    bool jumpsOk = jumps.size() == 1 && jumps[0].address == codeBase + 12 &&
+        jumps[0].target == codeBase + 15;
     bool ripOk = ripRelative.size() == 1 && ripRelative[0].address == codeBase &&
         ripRelative[0].target == stringBase;
-    bool assemblyOk = assembly.size() == 1 && assembly[0].address == codeBase + 12;
-    bool cavesOk = caves.size() == 1 && caves[0].address == codeBase + 13 && caves[0].size == 20;
+    bool assemblyOk = assembly.size() == 1 && assembly[0].address == codeBase + 14;
+    bool cavesOk = caves.size() == 1 && caves[0].address == codeBase + 15 && caves[0].size == 20;
 
     printf("  Referenced strings: %s\n", stringOk ? "OK" : "FAILED");
     printf("  Referenced functions: %s\n", functionOk ? "OK" : "FAILED");
+    printf("  Jump detection: %s\n", jumpsOk ? "OK" : "FAILED");
     printf("  RIP-relative instructions: %s\n", ripOk ? "OK" : "FAILED");
     printf("  Assembly pattern scan: %s\n", assemblyOk ? "OK" : "FAILED");
     printf("  Code caves: %s\n", cavesOk ? "OK" : "FAILED");

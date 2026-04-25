@@ -36,10 +36,11 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     auto* tabs = new QTabWidget;
     stringsTable_ = new QTableWidget;
     functionsTable_ = new QTableWidget;
+    jumpsTable_ = new QTableWidget;
     ripRelativeTable_ = new QTableWidget;
     assemblyTable_ = new QTableWidget;
     cavesTable_ = new QTableWidget;
-    for (auto* table : {stringsTable_, functionsTable_, ripRelativeTable_, assemblyTable_}) {
+    for (auto* table : {stringsTable_, functionsTable_, jumpsTable_, ripRelativeTable_, assemblyTable_}) {
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({"Instruction", "Target", "Text"});
         table->horizontalHeader()->setStretchLastSection(true);
@@ -66,6 +67,7 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     });
     tabs->addTab(stringsTable_, "Referenced Strings");
     tabs->addTab(functionsTable_, "Referenced Functions");
+    tabs->addTab(jumpsTable_, "Jumps");
     tabs->addTab(ripRelativeTable_, "RIP-relative");
     tabs->addTab(assemblyTable_, "Assembly Scan");
     tabs->addTab(cavesTable_, "Code Caves");
@@ -103,6 +105,7 @@ void CodeReferencesWindow::analyzeSelectedModule() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(*proc_, module);
     auto functions = analyzer.findReferencedFunctions(*proc_, module);
+    auto jumps = analyzer.findJumps(*proc_, module);
     auto ripRelative = analyzer.findRipRelativeInstructions(*proc_, module);
     auto assembly = assemblyPatternEdit_->text().trimmed().isEmpty()
         ? std::vector<CodeRef>{}
@@ -111,13 +114,15 @@ void CodeReferencesWindow::analyzeSelectedModule() {
 
     fillTable(stringsTable_, strings);
     fillTable(functionsTable_, functions);
+    fillTable(jumpsTable_, jumps);
     fillTable(ripRelativeTable_, ripRelative);
     fillTable(assemblyTable_, assembly);
     fillCavesTable(caves);
-    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 RIP-relative, %5 assembly, %6 caves")
+    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 jumps, %5 RIP-relative, %6 assembly, %7 caves")
         .arg(QString::fromStdString(module.name))
         .arg(strings.size())
         .arg(functions.size())
+        .arg(jumps.size())
         .arg(ripRelative.size())
         .arg(assembly.size())
         .arg(caves.size()));

@@ -33,6 +33,7 @@ private:
     QLineEdit* assemblyPatternEdit_;
     QTableWidget* stringsTable_;
     QTableWidget* functionsTable_;
+    QTableWidget* jumpsTable_;
     QTableWidget* ripRelativeTable_;
     QTableWidget* assemblyTable_;
     QTableWidget* cavesTable_;

@@ -35,6 +35,9 @@ public:
     /// Find direct call targets inside a module.
     std::vector<CodeRef> findReferencedFunctions(ProcessHandle& proc, const ModuleInfo& module);
 
+    /// Find direct conditional and unconditional jump targets inside a module.
+    std::vector<CodeRef> findJumps(ProcessHandle& proc, const ModuleInfo& module);
+
     /// Find RIP-relative memory references inside executable module regions.
     std::vector<CodeRef> findRipRelativeInstructions(ProcessHandle& proc, const ModuleInfo& module);
 
