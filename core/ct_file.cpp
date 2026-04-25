@@ -93,6 +93,8 @@ bool CheatTable::save(const std::string& path) const {
                 f << "          <Offset>" << field.offset << "</Offset>\n";
                 f << "          <Type>" << typeToStr(field.type) << "</Type>\n";
                 f << "          <Size>" << field.size << "</Size>\n";
+                if (!field.displayMethod.empty())
+                    f << "          <DisplayMethod>" << xmlEscape(field.displayMethod) << "</DisplayMethod>\n";
                 f << "        </Element>\n";
             }
             f << "      </Elements>\n";
@@ -480,6 +482,7 @@ bool CheatTable::load(const std::string& path) {
                 try { field.size = std::stoull(fieldSizeStr, nullptr, 0); } catch (...) {}
             }
             field.type = strToType(getTag(elementXml, "Type"));
+            field.displayMethod = xmlUnescape(getTag(elementXml, "DisplayMethod"));
             structure.fields.push_back(std::move(field));
         }
 
@@ -549,7 +552,10 @@ bool CheatTable::saveJson(const std::string& path) const {
             f << "{\"name\":\"" << jsonEscape(field.name) << "\"";
             f << ",\"offset\":" << field.offset;
             f << ",\"type\":" << (int)field.type;
-            f << ",\"size\":" << field.size << "}";
+            f << ",\"size\":" << field.size;
+            if (!field.displayMethod.empty())
+                f << ",\"display\":\"" << jsonEscape(field.displayMethod) << "\"";
+            f << "}";
             if (fieldIndex + 1 < s.fields.size()) f << ",";
         }
         f << "]}";
@@ -619,6 +625,7 @@ bool CheatTable::loadJson(const std::string& path) {
                     field.offset = jsonSizeField(fieldItem, "offset");
                     field.type = jsonValueTypeField(fieldItem);
                     field.size = jsonSizeField(fieldItem, "size", 4);
+                    field.displayMethod = jsonStringField(fieldItem, "display");
                     structure.fields.push_back(std::move(field));
                 }
             }

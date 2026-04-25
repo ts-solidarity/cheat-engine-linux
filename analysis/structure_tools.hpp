@@ -44,5 +44,7 @@ std::vector<StructurePointerChain> followStructurePointers(ProcessHandle& proc,
     uintptr_t baseAddress,
     const StructureDefinition& structure,
     size_t maxDepth = 2);
+std::string formatStructureFieldValue(const StructureField& field,
+    const std::vector<uint8_t>& snapshot);
 
 } // namespace ce

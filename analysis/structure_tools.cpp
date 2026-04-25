@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <iomanip>
 #include <sstream>
 
 namespace ce {
@@ -65,12 +66,27 @@ ValueType suggestedTypeForRun(size_t size) {
     }
 }
 
+std::string lowerCopy(const std::string& value) {
+    std::string out = value;
+    std::transform(out.begin(), out.end(), out.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
 bool isReadablePointer(ProcessHandle& proc, uintptr_t address) {
     auto region = proc.queryRegion(address);
     return region && (region->protection & MemProt::Read) &&
         address >= region->base &&
         region->size >= sizeof(uintptr_t) &&
         address <= region->base + region->size - sizeof(uintptr_t);
+}
+
+template<typename T>
+bool readSnapshotValue(const std::vector<uint8_t>& snapshot, size_t offset, T& out) {
+    if (offset > snapshot.size() || snapshot.size() - offset < sizeof(T))
+        return false;
+    std::memcpy(&out, snapshot.data() + offset, sizeof(T));
+    return true;
 }
 
 } // namespace
@@ -241,6 +257,104 @@ std::vector<StructurePointerChain> followStructurePointers(ProcessHandle& proc,
     }
 
     return chains;
+}
+
+std::string formatStructureFieldValue(const StructureField& field,
+    const std::vector<uint8_t>& snapshot)
+{
+    const size_t fieldSize = defaultSizeFor(field.type, field.size);
+    if (fieldSize == 0 || field.offset >= snapshot.size())
+        return {};
+
+    const size_t available = std::min(fieldSize, snapshot.size() - field.offset);
+    auto method = lowerCopy(field.displayMethod);
+    if (method.empty()) {
+        switch (field.type) {
+            case ValueType::Float:
+            case ValueType::Double:
+                method = "float";
+                break;
+            case ValueType::Pointer:
+                method = "pointer";
+                break;
+            case ValueType::ByteArray:
+            case ValueType::String:
+            case ValueType::UnicodeString:
+                method = "hex";
+                break;
+            default:
+                method = "signed";
+                break;
+        }
+    }
+
+    std::ostringstream out;
+    if (method == "hex" || method == "bytes") {
+        out << std::hex << std::setfill('0');
+        for (size_t i = 0; i < available; ++i) {
+            if (i) out << ' ';
+            out << std::setw(2) << static_cast<unsigned>(snapshot[field.offset + i]);
+        }
+        return out.str();
+    }
+
+    if (method == "pointer") {
+        uintptr_t value = 0;
+        if (!readSnapshotValue(snapshot, field.offset, value))
+            return {};
+        out << "0x" << std::hex << value;
+        return out.str();
+    }
+
+    if (method == "float") {
+        if (field.type == ValueType::Double || fieldSize == sizeof(double)) {
+            double value = 0;
+            if (!readSnapshotValue(snapshot, field.offset, value))
+                return {};
+            out << value;
+            return out.str();
+        }
+        float value = 0;
+        if (!readSnapshotValue(snapshot, field.offset, value))
+            return {};
+        out << value;
+        return out.str();
+    }
+
+    if (method == "unsigned") {
+        uint64_t value = 0;
+        const size_t copySize = std::min(available, sizeof(value));
+        std::memcpy(&value, snapshot.data() + field.offset, copySize);
+        out << value;
+        return out.str();
+    }
+
+    int64_t value = 0;
+    switch (std::min(available, sizeof(value))) {
+        case 1: {
+            int8_t v = 0;
+            std::memcpy(&v, snapshot.data() + field.offset, sizeof(v));
+            value = v;
+            break;
+        }
+        case 2: {
+            int16_t v = 0;
+            std::memcpy(&v, snapshot.data() + field.offset, sizeof(v));
+            value = v;
+            break;
+        }
+        case 4: {
+            int32_t v = 0;
+            std::memcpy(&v, snapshot.data() + field.offset, sizeof(v));
+            value = v;
+            break;
+        }
+        default:
+            std::memcpy(&value, snapshot.data() + field.offset, std::min(available, sizeof(value)));
+            break;
+    }
+    out << value;
+    return out.str();
 }
 
 } // namespace ce

@@ -113,6 +113,7 @@ static void test_cheat_table_json() {
     structure.size = 16;
     structure.fields.push_back({"health", 0, ValueType::Int32, 4});
     structure.fields.push_back({"mana", 4, ValueType::Float, 4});
+    structure.fields[0].displayMethod = "unsigned";
     table.structures.push_back(structure);
 
     auto jsonPath = std::filesystem::temp_directory_path() /
@@ -138,6 +139,7 @@ static void test_cheat_table_json() {
             loaded.structures[0].fields[0].name == "health" &&
             loaded.structures[0].fields[0].offset == 0 &&
             loaded.structures[0].fields[0].type == ValueType::Int32 &&
+            loaded.structures[0].fields[0].displayMethod == "unsigned" &&
             loaded.structures[0].fields[1].name == "mana" &&
             loaded.structures[0].fields[1].offset == 4 &&
             loaded.structures[0].fields[1].type == ValueType::Float &&
@@ -271,6 +273,8 @@ static void test_structure_tools() {
     structure.fields.push_back({"health", 0, ValueType::Int32, 4});
     structure.fields.push_back({"mana value", 4, ValueType::Float, 4});
     structure.fields.push_back({"target", 16, ValueType::Pointer, sizeof(uintptr_t)});
+    structure.fields[0].displayMethod = "hex";
+    structure.fields[1].displayMethod = "float";
 
     auto path = std::filesystem::temp_directory_path() /
         ("cecore-structure-" + std::to_string(getpid()) + ".json");
@@ -284,6 +288,7 @@ static void test_structure_tools() {
         loaded->size == structure.size &&
         loaded->fields.size() == structure.fields.size() &&
         loaded->fields[1].name == "mana value" &&
+        loaded->fields[0].displayMethod == "hex" &&
         loaded->fields[2].type == ValueType::Pointer;
     bool cppOk = cpp.find("struct Player_State") != std::string::npos &&
         cpp.find("int32_t health; // 0x0") != std::string::npos &&
@@ -330,11 +335,16 @@ static void test_structure_tools() {
         chains[0].addresses[0] == nodeA &&
         chains[0].addresses[1] == nodeB;
 
+    bool displayOk = formatStructureFieldValue(structure.fields[0], after) == "88 77 66 55" &&
+        formatStructureFieldValue(structure.fields[1], after).find("12.5") == 0 &&
+        formatStructureFieldValue(structure.fields[2], memory).find("0x") == 0;
+
     printf("  template save/load: %s\n", (saveOk && loadOk) ? "OK" : "FAILED");
     printf("  C++ struct export: %s\n", cppOk ? "OK" : "FAILED");
     printf("  snapshot comparison: %s\n", diffOk ? "OK" : "FAILED");
     printf("  changed field detection: %s\n", detectOk ? "OK" : "FAILED");
     printf("  pointer chain following: %s\n", pointerOk ? "OK" : "FAILED");
+    printf("  custom field display: %s\n", displayOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {

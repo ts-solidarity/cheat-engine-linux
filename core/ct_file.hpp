@@ -30,6 +30,7 @@ struct StructureField {
     size_t offset = 0;
     ValueType type = ValueType::Int32;
     size_t size = 4;
+    std::string displayMethod;
 };
 
 struct StructureDefinition {
