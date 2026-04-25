@@ -108,6 +108,7 @@ if(Qt6_FOUND)
         gui/breakpointlist.cpp
         gui/codefinder.cpp
         gui/codereferences.cpp
+        gui/heapregions.cpp
         gui/memoryregions.cpp
         gui/modulelist.cpp
         gui/stackview.cpp
