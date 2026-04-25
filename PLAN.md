@@ -137,8 +137,8 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [x] Process: openProcess, getProcessIDFromProcessName, getProcessList
 - [x] Scanning: createMemScan, firstScan, nextScan, getFoundCount, getAddress
 - [x] Assembly: autoAssemble, autoAssembleCheck, assemble, disassemble
-- [ ] Debug: debug_setBreakpoint, debug_removeBreakpoint, debug_continueFromBreakpoint
-- [ ] Debug: debug_getBreakpointList, debug_isDebugging, debug_isBroken
+- [x] Debug: debug_setBreakpoint, debug_removeBreakpoint, debug_continueFromBreakpoint
+- [x] Debug: debug_getBreakpointList, debug_isDebugging, debug_isBroken
 - [x] Symbols: registerSymbol, unregisterSymbol, getNameFromAddress, getAddressFromName
 - [x] GUI forms: createForm, createButton, createLabel, createEdit, createCheckBox, createListView
 - [x] GUI component properties: setProperty, getProperty, component.Caption, component.Visible, etc.
@@ -203,6 +203,8 @@ Note: structure fields now support nested structure references, persisted throug
 Note: Lua hotkey bindings now expose `createHotkey`/`setHotkeyAction` objects with key storage, enabled state, callback replacement, explicit trigger methods, and cleanup for headless script compatibility.
 
 Note: Lua table/address-list bindings now include a headless address-list store with `getTableEntry`, `setTableEntry`, add/remove/clear helpers, and count queries for script compatibility.
+
+Note: Lua debug bindings now expose headless breakpoint metadata state for set/remove/continue/list/isDebugging/isBroken; actual ptrace stop/resume behavior remains in the native debugger/session layer.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

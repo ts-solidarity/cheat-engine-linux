@@ -906,6 +906,109 @@ static int l_debug_getThreadList(lua_State* L) {
     return 1;
 }
 
+static void ensureLuaBreakpointList(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_lua_breakpoints");
+    if (lua_istable(L, -1))
+        return;
+
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_breakpoints");
+    lua_pushinteger(L, 1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_next_breakpoint_id");
+    lua_pushboolean(L, 0);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_debug_broken");
+}
+
+static int nextLuaBreakpointId(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_lua_next_breakpoint_id");
+    int id = static_cast<int>(lua_tointeger(L, -1));
+    lua_pop(L, 1);
+    if (id <= 0) id = 1;
+    lua_pushinteger(L, id + 1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_next_breakpoint_id");
+    return id;
+}
+
+static int l_debug_setBreakpoint(lua_State* L) {
+    uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    int type = static_cast<int>(luaL_optinteger(L, 2, 0));
+    int size = static_cast<int>(luaL_optinteger(L, 3, 1));
+
+    ensureLuaBreakpointList(L);
+    int id = nextLuaBreakpointId(L);
+
+    lua_newtable(L);
+    lua_pushinteger(L, id); lua_setfield(L, -2, "id");
+    lua_pushinteger(L, static_cast<lua_Integer>(address)); lua_setfield(L, -2, "address");
+    lua_pushinteger(L, type); lua_setfield(L, -2, "type");
+    lua_pushinteger(L, size); lua_setfield(L, -2, "size");
+    lua_pushboolean(L, 1); lua_setfield(L, -2, "enabled");
+    lua_pushinteger(L, 0); lua_setfield(L, -2, "hitCount");
+    lua_rawseti(L, -2, id);
+    lua_pop(L, 1);
+
+    lua_pushinteger(L, id);
+    return 1;
+}
+
+static int l_debug_removeBreakpoint(lua_State* L) {
+    int id = static_cast<int>(luaL_checkinteger(L, 1));
+    ensureLuaBreakpointList(L);
+    lua_pushnil(L);
+    lua_rawseti(L, -2, id);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_debug_continueFromBreakpoint(lua_State* L) {
+    (void)L;
+    lua_pushboolean(L, 0);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_lua_debug_broken");
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_debug_getBreakpointList(lua_State* L) {
+    ensureLuaBreakpointList(L);
+    lua_newtable(L);
+    int outIndex = 1;
+    lua_pushnil(L);
+    while (lua_next(L, -3) != 0) {
+        if (lua_istable(L, -1)) {
+            lua_pushvalue(L, -1);
+            lua_rawseti(L, -4, outIndex++);
+        }
+        lua_pop(L, 1);
+    }
+    lua_remove(L, -2);
+    return 1;
+}
+
+static int l_debug_isDebugging(lua_State* L) {
+    ensureLuaBreakpointList(L);
+    bool hasBreakpoint = false;
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {
+        hasBreakpoint = true;
+        lua_pop(L, 2);
+        break;
+    }
+    lua_pop(L, 1);
+    lua_pushboolean(L, hasBreakpoint);
+    return 1;
+}
+
+static int l_debug_isBroken(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_lua_debug_broken");
+    bool broken = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    lua_pushboolean(L, broken);
+    return 1;
+}
+
 // ── Address list manipulation ──
 
 static void ensureLuaAddressList(lua_State* L) {
@@ -1470,6 +1573,12 @@ void registerExtendedBindings(lua_State* L) {
 
     // Debug
     lua_register(L, "debug_getThreadList", l_debug_getThreadList);
+    lua_register(L, "debug_setBreakpoint", l_debug_setBreakpoint);
+    lua_register(L, "debug_removeBreakpoint", l_debug_removeBreakpoint);
+    lua_register(L, "debug_continueFromBreakpoint", l_debug_continueFromBreakpoint);
+    lua_register(L, "debug_getBreakpointList", l_debug_getBreakpointList);
+    lua_register(L, "debug_isDebugging", l_debug_isDebugging);
+    lua_register(L, "debug_isBroken", l_debug_isBroken);
 
     // Address list
     lua_register(L, "addressList_getCount", l_addressList_getCount);

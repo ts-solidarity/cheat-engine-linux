@@ -923,6 +923,28 @@ static void test_lua_address_list_bindings() {
     printf("  getTableEntry/setTableEntry/addressList: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_debug_bindings() {
+    printf("\n── Test: Lua debug bindings ──\n");
+
+    LuaEngine lua;
+    auto err = lua.execute(
+        "assert(debug_isDebugging() == false)\n"
+        "assert(debug_isBroken() == false)\n"
+        "local id = debug_setBreakpoint(0x401000, bptExecute, 1)\n"
+        "assert(type(id) == 'number' and id > 0)\n"
+        "assert(debug_isDebugging() == true)\n"
+        "local list = debug_getBreakpointList()\n"
+        "assert(#list == 1)\n"
+        "assert(list[1].id == id and list[1].address == 0x401000)\n"
+        "assert(list[1].type == bptExecute and list[1].size == 1)\n"
+        "assert(debug_continueFromBreakpoint() == true)\n"
+        "assert(debug_removeBreakpoint(id) == true)\n"
+        "assert(#debug_getBreakpointList() == 0)\n"
+        "assert(debug_isDebugging() == false)\n");
+
+    printf("  debug_set/remove/list/state: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_lua_process_bindings(pid_t pid) {
     printf("\n── Test: Lua process bindings ──\n");
 
@@ -1690,6 +1712,7 @@ int main(int argc, char* argv[]) {
     test_lua_utility_bindings();
     test_lua_hotkey_bindings();
     test_lua_address_list_bindings();
+    test_lua_debug_bindings();
     test_lua_process_bindings(targetPid);
     test_lua_memscan();
     test_binary_scan_bitmask();
