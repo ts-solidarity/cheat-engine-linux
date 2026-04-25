@@ -5,11 +5,23 @@
 #include <sstream>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 #include <type_traits>
 #include <stdexcept>
+#include <cctype>
+#include <cerrno>
+#include <limits>
+#include <optional>
+#include <cstdlib>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+}
 
 namespace ce {
 
@@ -24,6 +36,8 @@ size_t MemoryScanner::valueSizeFor(ValueType vt) {
         case ValueType::Pointer: return sizeof(uintptr_t);
         case ValueType::Float:   return 4;
         case ValueType::Double:  return 8;
+        case ValueType::String:  return 1;
+        case ValueType::UnicodeString: return 2;
         default:                 return 4;
     }
 }
@@ -31,6 +45,72 @@ size_t MemoryScanner::valueSizeFor(ValueType vt) {
 // ── Comparison functions ──
 
 namespace {
+
+std::string trimCopy(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])))
+        ++start;
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])))
+        --end;
+    return value.substr(start, end - start);
+}
+
+std::string lowerCopy(const std::string& value) {
+    std::string out = value;
+    std::transform(out.begin(), out.end(), out.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+std::string unquoteCopy(const std::string& value) {
+    auto trimmed = trimCopy(value);
+    if (trimmed.size() >= 2) {
+        char first = trimmed.front();
+        char last = trimmed.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\''))
+            return trimmed.substr(1, trimmed.size() - 2);
+    }
+    return trimmed;
+}
+
+bool parseInt64Token(const std::string& text, int64_t& out) {
+    auto token = trimCopy(text);
+    if (token.empty()) return false;
+    errno = 0;
+    char* end = nullptr;
+    long long parsed = std::strtoll(token.c_str(), &end, 0);
+    if (errno != 0 || end == token.c_str() || *end != '\0')
+        return false;
+    out = static_cast<int64_t>(parsed);
+    return true;
+}
+
+bool parseDoubleToken(const std::string& text, double& out) {
+    auto token = trimCopy(text);
+    if (token.empty()) return false;
+    errno = 0;
+    char* end = nullptr;
+    double parsed = std::strtod(token.c_str(), &end);
+    if (errno != 0 || end == token.c_str() || *end != '\0')
+        return false;
+    out = parsed;
+    return true;
+}
+
+bool parseSizeToken(const std::string& text, size_t& out) {
+    auto token = trimCopy(text);
+    if (token.empty()) return false;
+    errno = 0;
+    char* end = nullptr;
+    unsigned long long parsed = std::strtoull(token.c_str(), &end, 0);
+    if (errno != 0 || end == token.c_str() || *end != '\0')
+        return false;
+    if (parsed > std::numeric_limits<size_t>::max())
+        return false;
+    out = static_cast<size_t>(parsed);
+    return true;
+}
 
 template<typename T>
 using CompareFn = bool(*)(T current, T scanVal, T scanVal2);
@@ -307,6 +387,128 @@ std::vector<uint8_t> utf16LeBytes(const std::string& text) {
     return bytes;
 }
 
+bool compareMaskedBytes(const uint8_t* currentVal,
+                        const std::vector<uint8_t>& pattern,
+                        const std::vector<bool>& mask);
+
+size_t groupedTermValueSize(const ScanConfig::GroupedTerm& term) {
+    switch (term.valueType) {
+        case ValueType::Byte:
+            return 1;
+        case ValueType::Int16:
+            return 2;
+        case ValueType::Int32:
+        case ValueType::Float:
+            return 4;
+        case ValueType::Int64:
+        case ValueType::Pointer:
+        case ValueType::Double:
+            return 8;
+        case ValueType::String:
+            return std::max<size_t>(1, term.stringValue.size());
+        case ValueType::UnicodeString:
+            return std::max<size_t>(2, term.stringValue.size() * 2);
+        case ValueType::ByteArray:
+        case ValueType::Binary:
+            return std::max<size_t>(1, term.byteArray.size());
+        default:
+            return 0;
+    }
+}
+
+bool groupedTermMatches(const uint8_t* value, const ScanConfig::GroupedTerm& term, const ScanConfig& config) {
+    switch (term.valueType) {
+        case ValueType::Byte: {
+            uint8_t current = value[0];
+            return current == static_cast<uint8_t>(term.intValue);
+        }
+        case ValueType::Int16: {
+            int16_t current{};
+            std::memcpy(&current, value, sizeof(current));
+            return current == static_cast<int16_t>(term.intValue);
+        }
+        case ValueType::Int32: {
+            int32_t current{};
+            std::memcpy(&current, value, sizeof(current));
+            return current == static_cast<int32_t>(term.intValue);
+        }
+        case ValueType::Int64: {
+            int64_t current{};
+            std::memcpy(&current, value, sizeof(current));
+            return current == term.intValue;
+        }
+        case ValueType::Pointer: {
+            uintptr_t current{};
+            std::memcpy(&current, value, sizeof(current));
+            return current == static_cast<uintptr_t>(term.intValue);
+        }
+        case ValueType::Float: {
+            float current{};
+            std::memcpy(&current, value, sizeof(current));
+            return compareFloatingExact(config, current, static_cast<float>(term.floatValue));
+        }
+        case ValueType::Double: {
+            double current{};
+            std::memcpy(&current, value, sizeof(current));
+            return compareFloatingExact(config, current, term.floatValue);
+        }
+        case ValueType::String:
+            return std::memcmp(value, term.stringValue.data(), term.stringValue.size()) == 0;
+        case ValueType::UnicodeString: {
+            auto needle = utf16LeBytes(term.stringValue);
+            return std::memcmp(value, needle.data(), needle.size()) == 0;
+        }
+        case ValueType::ByteArray:
+            return compareMaskedBytes(value, term.byteArray, term.byteArrayMask);
+        case ValueType::Binary: {
+            if (term.byteMask.size() != term.byteArray.size())
+                return false;
+            for (size_t i = 0; i < term.byteArray.size(); ++i) {
+                if ((value[i] & term.byteMask[i]) != (term.byteArray[i] & term.byteMask[i]))
+                    return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+bool groupedBlockMatches(const uint8_t* block, size_t blockSize, const ScanConfig& config) {
+    for (const auto& term : config.groupedTerms) {
+        size_t termSize = groupedTermValueSize(term);
+        if (termSize == 0 || term.offset > blockSize - termSize)
+            return false;
+        if (!groupedTermMatches(block + term.offset, term, config))
+            return false;
+    }
+    return true;
+}
+
+void scanBufferUnknown(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
+                       size_t alignment, size_t valueSize, ScanResult& result) {
+    if (valueSize == 0 || bufSize < valueSize) return;
+    if (alignment == 0) alignment = 1;
+
+    size_t limit = bufSize - valueSize + 1;
+    for (size_t offset = 0; offset < limit; offset += alignment)
+        result.addResult(baseAddr + offset, buf + offset, valueSize);
+}
+
+void scanBufferGrouped(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
+                       size_t alignment, const ScanConfig& config, ScanResult& result) {
+    if (config.groupedTerms.empty()) return;
+    size_t blockSize = config.groupedValueSize();
+    if (blockSize == 0 || bufSize < blockSize) return;
+    if (alignment == 0) alignment = 1;
+
+    size_t limit = bufSize - blockSize + 1;
+    for (size_t offset = 0; offset < limit; offset += alignment) {
+        if (groupedBlockMatches(buf + offset, blockSize, config))
+            result.addResult(baseAddr + offset, buf + offset, blockSize);
+    }
+}
+
 size_t valueSizeForConfig(const ScanConfig& config) {
     switch (config.valueType) {
         case ValueType::String:
@@ -316,6 +518,12 @@ size_t valueSizeForConfig(const ScanConfig& config) {
         case ValueType::ByteArray:
         case ValueType::Binary:
             return std::max<size_t>(1, config.byteArray.size());
+        case ValueType::All:
+            return 8;
+        case ValueType::Grouped:
+            return std::max<size_t>(1, config.groupedValueSize());
+        case ValueType::Custom:
+            return std::max<size_t>(1, config.customValueSize);
         case ValueType::Byte:
             return 1;
         case ValueType::Int16:
@@ -378,6 +586,45 @@ bool memoryTypeAllowed(const ScanConfig& config, MemType type) {
     return false;
 }
 
+bool evaluateCustomFormula(const ScanConfig& config,
+                           const uint8_t* currentVal,
+                           const uint8_t* oldVal,
+                           size_t valueSize,
+                           bool hasOld,
+                           bool& matchOut) {
+    matchOut = false;
+    if (config.customFormula.empty())
+        return false;
+
+    lua_State* L = luaL_newstate();
+    if (!L)
+        return false;
+    luaL_openlibs(L);
+
+    lua_pushlstring(L, reinterpret_cast<const char*>(currentVal), valueSize);
+    lua_setglobal(L, "current");
+    lua_pushlstring(L, reinterpret_cast<const char*>(oldVal), valueSize);
+    lua_setglobal(L, "old");
+    lua_pushboolean(L, hasOld ? 1 : 0);
+    lua_setglobal(L, "hasOld");
+    lua_pushinteger(L, static_cast<lua_Integer>(valueSize));
+    lua_setglobal(L, "valueSize");
+
+    bool ok = false;
+    if (luaL_dostring(L, config.customFormula.c_str()) == LUA_OK) {
+        if (lua_isboolean(L, -1)) {
+            matchOut = lua_toboolean(L, -1) != 0;
+            ok = true;
+        } else if (lua_isnumber(L, -1)) {
+            matchOut = lua_tonumber(L, -1) != 0.0;
+            ok = true;
+        }
+    }
+
+    lua_close(L);
+    return ok;
+}
+
 } // anonymous namespace
 
 // ── AOB pattern parser ──
@@ -437,6 +684,140 @@ void ScanConfig::parseBinary(const std::string& pattern) {
     byteArrayMask.resize(byteMask.size());
     for (size_t i = 0; i < byteMask.size(); ++i)
         byteArrayMask[i] = byteMask[i] != 0;
+}
+
+bool ScanConfig::parseGrouped(const std::string& expression, std::string* error) {
+    groupedTerms.clear();
+    groupedExpression = expression;
+
+    auto fail = [&](const std::string& message) {
+        if (error)
+            *error = message;
+        groupedTerms.clear();
+        return false;
+    };
+
+    auto expr = trimCopy(expression);
+    if (expr.empty())
+        return fail("grouped expression is empty");
+
+    std::stringstream ss(expr);
+    std::string rawTerm;
+    size_t termIndex = 0;
+    while (std::getline(ss, rawTerm, ';')) {
+        auto termText = trimCopy(rawTerm);
+        if (termText.empty())
+            continue;
+        ++termIndex;
+
+        auto atPos = termText.rfind('@');
+        if (atPos == std::string::npos)
+            return fail("missing @offset in grouped term " + std::to_string(termIndex));
+
+        auto lhs = trimCopy(termText.substr(0, atPos));
+        auto offsetToken = trimCopy(termText.substr(atPos + 1));
+        size_t offset = 0;
+        if (!parseSizeToken(offsetToken, offset))
+            return fail("invalid offset in grouped term " + std::to_string(termIndex));
+
+        auto colonPos = lhs.find(':');
+        if (colonPos == std::string::npos)
+            return fail("missing type:value in grouped term " + std::to_string(termIndex));
+
+        auto typeToken = lowerCopy(trimCopy(lhs.substr(0, colonPos)));
+        auto valueToken = trimCopy(lhs.substr(colonPos + 1));
+        if (valueToken.empty())
+            return fail("missing value in grouped term " + std::to_string(termIndex));
+
+        GroupedTerm term;
+        term.offset = offset;
+
+        if (typeToken == "byte" || typeToken == "i8") {
+            term.valueType = ValueType::Byte;
+            if (!parseInt64Token(valueToken, term.intValue))
+                return fail("invalid byte value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "i16" || typeToken == "word") {
+            term.valueType = ValueType::Int16;
+            if (!parseInt64Token(valueToken, term.intValue))
+                return fail("invalid i16 value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "i32" || typeToken == "dword" || typeToken == "int") {
+            term.valueType = ValueType::Int32;
+            if (!parseInt64Token(valueToken, term.intValue))
+                return fail("invalid i32 value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "i64" || typeToken == "qword") {
+            term.valueType = ValueType::Int64;
+            if (!parseInt64Token(valueToken, term.intValue))
+                return fail("invalid i64 value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "pointer" || typeToken == "ptr") {
+            term.valueType = ValueType::Pointer;
+            if (!parseInt64Token(valueToken, term.intValue))
+                return fail("invalid pointer value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "float" || typeToken == "single") {
+            term.valueType = ValueType::Float;
+            if (!parseDoubleToken(valueToken, term.floatValue))
+                return fail("invalid float value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "double") {
+            term.valueType = ValueType::Double;
+            if (!parseDoubleToken(valueToken, term.floatValue))
+                return fail("invalid double value in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "string" || typeToken == "str") {
+            term.valueType = ValueType::String;
+            term.stringValue = unquoteCopy(valueToken);
+            if (term.stringValue.empty())
+                return fail("empty string in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "unicode" || typeToken == "utf16" || typeToken == "wstring") {
+            term.valueType = ValueType::UnicodeString;
+            term.stringValue = unquoteCopy(valueToken);
+            if (term.stringValue.empty())
+                return fail("empty unicode string in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "aob" || typeToken == "bytearray") {
+            term.valueType = ValueType::ByteArray;
+            ScanConfig temp;
+            temp.parseAOB(valueToken);
+            term.byteArray = std::move(temp.byteArray);
+            term.byteArrayMask = std::move(temp.byteArrayMask);
+            if (term.byteArray.empty())
+                return fail("empty AOB pattern in grouped term " + std::to_string(termIndex));
+        } else if (typeToken == "binary" || typeToken == "bin") {
+            term.valueType = ValueType::Binary;
+            ScanConfig temp;
+            temp.parseBinary(valueToken);
+            term.byteArray = std::move(temp.byteArray);
+            term.byteMask = std::move(temp.byteMask);
+            term.byteArrayMask = std::move(temp.byteArrayMask);
+            if (term.byteArray.empty())
+                return fail("empty binary pattern in grouped term " + std::to_string(termIndex));
+        } else {
+            return fail("unknown grouped value type '" + typeToken + "' in term " + std::to_string(termIndex));
+        }
+
+        size_t termSize = groupedTermValueSize(term);
+        if (termSize == 0)
+            return fail("unsupported grouped value type in term " + std::to_string(termIndex));
+        if (term.offset > std::numeric_limits<size_t>::max() - termSize)
+            return fail("offset overflow in grouped term " + std::to_string(termIndex));
+
+        groupedTerms.push_back(std::move(term));
+    }
+
+    if (groupedTerms.empty())
+        return fail("grouped expression produced no terms");
+
+    if (error)
+        error->clear();
+    return true;
+}
+
+size_t ScanConfig::groupedValueSize() const {
+    size_t blockSize = 0;
+    for (const auto& term : groupedTerms) {
+        size_t termSize = groupedTermValueSize(term);
+        if (termSize == 0) continue;
+        if (term.offset > std::numeric_limits<size_t>::max() - termSize)
+            return 0;
+        blockSize = std::max(blockSize, term.offset + termSize);
+    }
+    return blockSize;
 }
 
 // ── ScanResult ──
@@ -579,8 +960,23 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
     cancelled_.store(false);
     progress_.store(0);
 
-    if (config.valueType == ValueType::Custom)
-        throw std::invalid_argument("ValueType::Custom requires a registered custom scanner");
+    if (config.valueType == ValueType::Grouped) {
+        if (config.groupedTerms.empty())
+            throw std::invalid_argument("ValueType::Grouped requires grouped terms (use parseGrouped)");
+        if (config.groupedValueSize() == 0)
+            throw std::invalid_argument("ValueType::Grouped has invalid grouped terms");
+        if (config.compareType != ScanCompare::Exact && config.compareType != ScanCompare::Unknown)
+            throw std::invalid_argument("ValueType::Grouped first scan supports only Exact or Unknown compare");
+    }
+
+    if (config.valueType == ValueType::Custom) {
+        if (config.customValueSize == 0)
+            throw std::invalid_argument("ValueType::Custom requires customValueSize > 0");
+        if (config.compareType == ScanCompare::Exact && config.customFormula.empty())
+            throw std::invalid_argument("ValueType::Custom exact scan requires customFormula");
+        if (config.compareType != ScanCompare::Exact && config.compareType != ScanCompare::Unknown)
+            throw std::invalid_argument("ValueType::Custom first scan supports only Exact or Unknown compare");
+    }
 
     // Get memory regions
     auto regions = proc.queryRegions();
@@ -597,8 +993,6 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
         if (!memoryTypeAllowed(config, r.type)) continue;
         scanRegions.push_back(r);
     }
-
-    size_t valueSize = valueSizeFor(config.valueType);
 
     auto resultDir = makeScanDir();
 
@@ -645,6 +1039,28 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
             case ValueType::All:
                 scanBufferAllTypes(buf, bytesRead, base, config.alignment,
                     config.intValue, config.floatValue, config.compareType, res); break;
+            case ValueType::Grouped:
+                if (config.compareType == ScanCompare::Unknown)
+                    scanBufferUnknown(buf, bytesRead, base, config.alignment, config.groupedValueSize(), res);
+                else
+                    scanBufferGrouped(buf, bytesRead, base, config.alignment, config, res);
+                break;
+            case ValueType::Custom: {
+                size_t customSize = std::max<size_t>(1, config.customValueSize);
+                if (bytesRead < customSize) break;
+                size_t limit = bytesRead - customSize + 1;
+                size_t alignment = std::max<size_t>(1, config.alignment);
+                for (size_t offset = 0; offset < limit; offset += alignment) {
+                    if (config.compareType == ScanCompare::Unknown) {
+                        res.addResult(base + offset, buf + offset, customSize);
+                        continue;
+                    }
+                    bool match = false;
+                    if (evaluateCustomFormula(config, buf + offset, buf + offset, customSize, false, match) && match)
+                        res.addResult(base + offset, buf + offset, customSize);
+                }
+                break;
+            }
             default: break;
         }
     };
@@ -758,8 +1174,33 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
     cancelled_.store(false);
     progress_.store(0);
 
-    if (config.valueType == ValueType::Custom)
-        throw std::invalid_argument("ValueType::Custom requires a registered custom scanner");
+    if (config.valueType == ValueType::Grouped) {
+        if (config.groupedTerms.empty())
+            throw std::invalid_argument("ValueType::Grouped requires grouped terms (use parseGrouped)");
+        if (config.groupedValueSize() == 0)
+            throw std::invalid_argument("ValueType::Grouped has invalid grouped terms");
+        if (config.compareType != ScanCompare::Exact &&
+            config.compareType != ScanCompare::Changed &&
+            config.compareType != ScanCompare::Unchanged &&
+            config.compareType != ScanCompare::SameAsFirst &&
+            config.compareType != ScanCompare::Unknown) {
+            throw std::invalid_argument("ValueType::Grouped next scan supports exact/changed/unchanged/samefirst/unknown");
+        }
+    }
+
+    if (config.valueType == ValueType::Custom) {
+        if (config.customValueSize == 0)
+            throw std::invalid_argument("ValueType::Custom requires customValueSize > 0");
+        if (config.compareType == ScanCompare::Exact && config.customFormula.empty())
+            throw std::invalid_argument("ValueType::Custom exact next scan requires customFormula");
+        if (config.compareType != ScanCompare::Exact &&
+            config.compareType != ScanCompare::Changed &&
+            config.compareType != ScanCompare::Unchanged &&
+            config.compareType != ScanCompare::SameAsFirst &&
+            config.compareType != ScanCompare::Unknown) {
+            throw std::invalid_argument("ValueType::Custom next scan supports exact/changed/unchanged/samefirst/unknown");
+        }
+    }
 
     size_t valueSize = valueSizeForConfig(config);
     auto resultDir = makeScanDir();
@@ -901,6 +1342,34 @@ ScanResult MemoryScanner::nextScan(ProcessHandle& proc, const ScanConfig& config
                         match = true;
                     }
                     break;
+                case ValueType::Grouped: {
+                    if (config.compareType == ScanCompare::Unknown) {
+                        match = true;
+                    } else if (config.compareType == ScanCompare::Changed) {
+                        match = std::memcmp(currentVal.data(), oldVal, valueSize) != 0;
+                    } else if (config.compareType == ScanCompare::Unchanged ||
+                               config.compareType == ScanCompare::SameAsFirst) {
+                        match = std::memcmp(currentVal.data(), compareVal, valueSize) == 0;
+                    } else if (config.compareType == ScanCompare::Exact) {
+                        match = groupedBlockMatches(currentVal.data(), valueSize, config);
+                    }
+                    break;
+                }
+                case ValueType::Custom: {
+                    if (config.compareType == ScanCompare::Unknown) {
+                        match = true;
+                    } else if (config.compareType == ScanCompare::Changed) {
+                        match = std::memcmp(currentVal.data(), oldVal, valueSize) != 0;
+                    } else if (config.compareType == ScanCompare::Unchanged ||
+                               config.compareType == ScanCompare::SameAsFirst) {
+                        match = std::memcmp(currentVal.data(), compareVal, valueSize) == 0;
+                    } else if (config.compareType == ScanCompare::Exact) {
+                        match = false;
+                        evaluateCustomFormula(config, currentVal.data(), compareVal, valueSize,
+                                              true, match);
+                    }
+                    break;
+                }
                 default: {
                     // Generic byte comparison
                     if (config.compareType == ScanCompare::SameAsFirst)

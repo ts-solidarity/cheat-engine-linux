@@ -65,6 +65,10 @@ private:
     std::vector<std::unique_ptr<os::LinuxDebugger>> codeFinderDebuggers_;
     std::unique_ptr<ScanResult> lastResult_;
     std::unique_ptr<ScanResult> undoResult_;
+    ce::ValueType lastResultType_ = ce::ValueType::Int32;
+    ce::ValueType undoResultType_ = ce::ValueType::Int32;
+    size_t lastResultValueSize_ = 0;
+    size_t undoResultValueSize_ = 0;
 
     // Top panel — process & scan
     QLabel* processLabel_;
@@ -105,7 +109,7 @@ class ScanResultsModel : public QAbstractTableModel {
     Q_OBJECT
 public:
     explicit ScanResultsModel(QObject* parent = nullptr);
-    void setResult(ScanResult* result, ce::ValueType vt);
+    void setResult(ScanResult* result, ce::ValueType vt, size_t valueSize = 0);
     void clear();
 
     int rowCount(const QModelIndex& = {}) const override;
@@ -118,6 +122,7 @@ public:
 private:
     ScanResult* result_ = nullptr;
     ce::ValueType valueType_ = ce::ValueType::Int32;
+    size_t valueSize_ = 0;
 };
 
 struct AddressEntry {

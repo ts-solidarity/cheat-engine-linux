@@ -38,8 +38,8 @@
 **1.1 Complete Scan Engine**
 - [x] Binary scan with bitmask wildcards
 - [x] "All Types" scan (vtAll) — scan byte/word/dword/qword/float/double simultaneously
-- [ ] Grouped scan — multiple value types in one pass with offsets
-- [ ] Custom Lua formula scan (`soCustom`)
+- [x] Grouped scan — multiple value types in one pass with offsets
+- [x] Custom Lua formula scan (`soCustom`)
 - [x] Percentage-based comparisons (increased by %, between %)
 - [x] Float rounding options (rounded, truncated, extreme)
 - [x] Unicode string scan (separate from UTF-8)
@@ -113,6 +113,12 @@ Note: float rounding modes are implemented for Float/Double exact scans, exposed
 Note: same-as-first next scans now retain first-scan baseline values across result narrowing, with CLI `--compare samefirst` and a GUI scan-type option.
 
 Note: pointer-type scans are implemented as native pointer-width value scans, exposed in CLI/GUI/Lua and covered by first/next scan tests.
+
+Note: grouped scans are implemented for CLI/GUI/Lua with `type:value@offset` terms, including next-scan changed/unchanged/same-as-first behavior.
+
+Note: custom Lua formula scans (`soCustom`) are implemented with per-result Lua predicates over raw value bytes (`current`/`old`), exposed in CLI/Lua and covered by regression tests.
+
+Note: grouped/custom scan results preserve their dynamic value sizes in the GUI result table and undo flow.
 
 ### Tier 2 — Important for Power Users (~6K lines, 3-4 weeks)
 

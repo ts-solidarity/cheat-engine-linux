@@ -887,6 +887,169 @@ static void test_all_types_scan() {
     printf("  vtAll numeric match: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_grouped_scan() {
+    printf("\n── Test: Grouped scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  grouped first/next: FAILED\n");
+        return;
+    }
+
+    std::memset(page, 0x7f, pageSize);
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+
+    int32_t i32Value = 1337;
+    float floatValue = 2.5f;
+    uint8_t byteValue = 66;
+    std::memcpy(bytes + 128, &i32Value, sizeof(i32Value));
+    std::memcpy(bytes + 132, &floatValue, sizeof(floatValue));
+    std::memcpy(bytes + 136, &byteValue, sizeof(byteValue));
+
+    uint8_t nearMiss = 65;
+    std::memcpy(bytes + 256, &i32Value, sizeof(i32Value));
+    std::memcpy(bytes + 260, &floatValue, sizeof(floatValue));
+    std::memcpy(bytes + 264, &nearMiss, sizeof(nearMiss));
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig grouped;
+    grouped.valueType = ValueType::Grouped;
+    grouped.compareType = ScanCompare::Exact;
+    grouped.alignment = 1;
+    grouped.startAddress = base;
+    grouped.stopAddress = base + pageSize;
+    std::string groupedError;
+    bool parsed = grouped.parseGrouped("i32:1337@0;float:2.5@4;byte:66@8", &groupedError);
+
+    bool ok = parsed;
+    auto first = parsed ? scanner.firstScan(proc, grouped) : ScanResult{};
+    ok = ok && first.count() == 1 && first.address(0) == base + 128;
+
+    byteValue = 67;
+    std::memcpy(bytes + 136, &byteValue, sizeof(byteValue));
+
+    ScanConfig changed = grouped;
+    changed.compareType = ScanCompare::Changed;
+    auto changedResult = parsed ? scanner.nextScan(proc, changed, first) : ScanResult{};
+    ok = ok && changedResult.count() == 1 && changedResult.address(0) == base + 128;
+
+    uint8_t firstBlock[9] = {};
+    if (changedResult.count() > 0)
+        changedResult.firstValue(0, firstBlock, sizeof(firstBlock));
+    ok = ok && firstBlock[8] == 66;
+
+    ScanConfig groupedUpdated = grouped;
+    groupedUpdated.compareType = ScanCompare::Exact;
+    parsed = groupedUpdated.parseGrouped("i32:1337@0;float:2.5@4;byte:67@8", &groupedError);
+    ok = ok && parsed;
+    auto exactResult = parsed ? scanner.nextScan(proc, groupedUpdated, changedResult) : ScanResult{};
+    ok = ok && exactResult.count() == 1 && exactResult.address(0) == base + 128;
+
+    munmap(page, pageSize);
+
+    printf("  grouped first/next: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_custom_formula_scan() {
+    printf("\n── Test: Custom formula scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  custom Lua formula: FAILED\n");
+        return;
+    }
+
+    std::memset(page, 0x55, pageSize);
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+
+    uint32_t target = 0x1234ABCD;
+    uint32_t decoy = 0x1234ABCE;
+    std::memcpy(bytes + 64, &target, sizeof(target));
+    std::memcpy(bytes + 128, &decoy, sizeof(decoy));
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig custom;
+    custom.valueType = ValueType::Custom;
+    custom.compareType = ScanCompare::Exact;
+    custom.customValueSize = 4;
+    custom.customFormula =
+        "local b1,b2,b3,b4 = string.byte(current,1,4)\n"
+        "return b1 == 0xCD and b2 == 0xAB and b3 == 0x34 and b4 == 0x12";
+    custom.alignment = 4;
+    custom.startAddress = base;
+    custom.stopAddress = base + pageSize;
+
+    auto first = scanner.firstScan(proc, custom);
+    bool ok = first.count() == 1 && first.address(0) == base + 64;
+
+    uint32_t changedValue = 0x1234ABCF;
+    std::memcpy(bytes + 64, &changedValue, sizeof(changedValue));
+
+    ScanConfig changed = custom;
+    changed.compareType = ScanCompare::Changed;
+    auto changedResult = scanner.nextScan(proc, changed, first);
+    ok = ok && changedResult.count() == 1 && changedResult.address(0) == base + 64;
+
+    std::memcpy(bytes + 64, &target, sizeof(target));
+    auto exactResult = scanner.nextScan(proc, custom, changedResult);
+    ok = ok && exactResult.count() == 1 && exactResult.address(0) == base + 64;
+
+    munmap(page, pageSize);
+
+    printf("  custom Lua formula: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_lua_memscan_grouped_custom() {
+    printf("\n── Test: Lua memscan grouped/custom ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  soCustom/vtGrouped: FAILED\n");
+        return;
+    }
+
+    std::memset(page, 0x22, pageSize);
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+    int32_t dwordValue = 777;
+    float floatValue = 1.5f;
+    std::memcpy(bytes, &dwordValue, sizeof(dwordValue));
+    std::memcpy(bytes + 4, &floatValue, sizeof(floatValue));
+
+    LinuxProcessHandle proc(getpid());
+    LuaEngine lua;
+    lua.setProcess(&proc);
+
+    std::string script =
+        "local base = " + std::to_string(base) + "\n"
+        "local stop = base + " + std::to_string(pageSize) + "\n"
+        "local grouped = createMemScan()\n"
+        "assert(grouped:firstScan(soExactValue, vtGrouped, 'i32:777@0;float:1.5@4', base, stop, 1))\n"
+        "assert(grouped:getFoundCount() == 1)\n"
+        "assert(grouped:getAddress(0) == base)\n"
+        "local custom = createMemScan()\n"
+        "assert(custom:firstScan(soCustom, vtDword, 'local b1,b2,b3,b4=string.byte(current,1,4); return b1==0x09 and b2==0x03 and b3==0 and b4==0', base, stop, 4))\n"
+        "assert(custom:getFoundCount() == 1)\n"
+        "assert(custom:getAddress(0) == base)\n";
+
+    auto err = lua.execute(script);
+    munmap(page, pageSize);
+
+    printf("  soCustom/vtGrouped: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_percentage_scan() {
     printf("\n── Test: Percentage scan ──\n");
 
@@ -1263,10 +1426,13 @@ int main(int argc, char* argv[]) {
     test_binary_scan_bitmask();
     test_unicode_string_scan();
     test_all_types_scan();
+    test_grouped_scan();
+    test_custom_formula_scan();
     test_percentage_scan();
     test_same_as_first_scan();
     test_pointer_type_scan();
     test_float_rounding_scan();
+    test_lua_memscan_grouped_custom();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

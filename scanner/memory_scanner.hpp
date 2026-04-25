@@ -12,6 +12,17 @@ namespace ce {
 
 /// Configuration for a memory scan.
 struct ScanConfig {
+    struct GroupedTerm {
+        ValueType valueType = ValueType::Int32;
+        size_t offset = 0;
+        int64_t intValue = 0;
+        double floatValue = 0.0;
+        std::string stringValue;
+        std::vector<uint8_t> byteArray;
+        std::vector<bool> byteArrayMask;
+        std::vector<uint8_t> byteMask;
+    };
+
     ValueType   valueType    = ValueType::Int32;
     ScanCompare compareType  = ScanCompare::Exact;
     size_t      alignment    = 4;        // Scan alignment (1=unaligned, 2, 4, 8)
@@ -38,12 +49,22 @@ struct ScanConfig {
     std::vector<bool> byteArrayMask; // true = must match, false = wildcard (??)
     std::vector<uint8_t> byteMask;   // Bit mask for binary scans: 1 bits must match
     std::string binaryString;        // Binary pattern: "0110??01" (? = wildcard bit)
+    std::vector<GroupedTerm> groupedTerms;
+    std::string groupedExpression;
+    std::string customFormula;
+    size_t customValueSize = 4;
 
     /// Parse an AOB pattern like "7F 45 ?? 46" into byteArray + byteArrayMask
     void parseAOB(const std::string& pattern);
 
     /// Parse a binary pattern like "0110??01" into byteArray + mask
     void parseBinary(const std::string& pattern);
+
+    /// Parse grouped expressions like "i32:100@0;float:1.5@4;byte:7@8".
+    bool parseGrouped(const std::string& expression, std::string* error = nullptr);
+
+    /// Size in bytes of one grouped result block.
+    size_t groupedValueSize() const;
 };
 
 /// Holds scan results on disk. Supports iteration without loading all into memory.

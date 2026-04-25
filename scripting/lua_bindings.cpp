@@ -24,6 +24,8 @@ extern "C" {
 #include <system_error>
 #include <utility>
 #include <vector>
+#include <algorithm>
+#include <stdexcept>
 
 namespace ce {
 
@@ -573,19 +575,119 @@ struct LuaScanData {
     std::unique_ptr<ScanResult> result;
 };
 
+static ValueType mapLuaValueType(int raw) {
+    switch (raw) {
+        case 0: return ValueType::Byte;
+        case 1: return ValueType::Int16;
+        case 2: return ValueType::Int32;
+        case 3: return ValueType::Int64;
+        case 4: return ValueType::Float;
+        case 5: return ValueType::Double;
+        case 6: return ValueType::String;
+        case 7: return ValueType::UnicodeString;
+        case 8: return ValueType::ByteArray;
+        case 9: return ValueType::Binary;
+        case 10: return ValueType::All;
+        case 11: return ValueType::Grouped;
+        case 12: return ValueType::Custom;
+        case 13: return ValueType::Pointer;
+        default:
+            return static_cast<ValueType>(raw);
+    }
+}
+
+static size_t luaValueTypeSize(ValueType vt) {
+    switch (vt) {
+        case ValueType::Byte: return 1;
+        case ValueType::Int16: return 2;
+        case ValueType::Int32:
+        case ValueType::Float: return 4;
+        case ValueType::Int64:
+        case ValueType::Pointer:
+        case ValueType::Double: return 8;
+        default: return 4;
+    }
+}
+
+static ScanCompare mapLuaScanType(int raw, bool& customFormula) {
+    customFormula = false;
+    switch (raw) {
+        case 0: return ScanCompare::Exact;
+        case 1: return ScanCompare::Between;
+        case 2: return ScanCompare::Greater;
+        case 3: return ScanCompare::Less;
+        case 4: return ScanCompare::Unknown;
+        case 5: return ScanCompare::Increased;
+        case 6: return ScanCompare::Decreased;
+        case 7: return ScanCompare::Changed;
+        case 8: return ScanCompare::Unchanged;
+        case 9: return ScanCompare::SameAsFirst;
+        case 10:
+            customFormula = true;
+            return ScanCompare::Exact;
+        default:
+            return static_cast<ScanCompare>(raw);
+    }
+}
+
 static ScanConfig luaScanConfig(lua_State* L, int scanTypeIndex, int valueTypeIndex, int valueIndex) {
     int scanType = (int)luaL_checkinteger(L, scanTypeIndex);
-    int valueType = (int)luaL_checkinteger(L, valueTypeIndex);
+    int valueTypeRaw = (int)luaL_checkinteger(L, valueTypeIndex);
     const char* value = luaL_checkstring(L, valueIndex);
 
     ScanConfig cfg;
-    cfg.valueType = (ValueType)valueType;
-    cfg.compareType = (ScanCompare)scanType;
-    cfg.intValue = atoll(value);
-    cfg.floatValue = atof(value);
-    cfg.alignment = (size_t)luaL_optinteger(L, valueIndex + 3, 4);
+    bool customFormula = false;
+    cfg.compareType = mapLuaScanType(scanType, customFormula);
+    cfg.valueType = mapLuaValueType(valueTypeRaw);
+    cfg.alignment = (size_t)std::max<lua_Integer>(1, luaL_optinteger(L, valueIndex + 3, 4));
     cfg.startAddress = (uintptr_t)luaL_optinteger(L, valueIndex + 1, cfg.startAddress);
     cfg.stopAddress = (uintptr_t)luaL_optinteger(L, valueIndex + 2, cfg.stopAddress);
+
+    if (customFormula)
+        cfg.valueType = ValueType::Custom;
+
+    switch (cfg.valueType) {
+        case ValueType::String:
+        case ValueType::UnicodeString:
+            cfg.stringValue = value;
+            cfg.alignment = 1;
+            break;
+        case ValueType::ByteArray:
+            cfg.parseAOB(value);
+            cfg.alignment = 1;
+            break;
+        case ValueType::Binary:
+            cfg.parseBinary(value);
+            cfg.alignment = 1;
+            break;
+        case ValueType::Float:
+        case ValueType::Double:
+            cfg.floatValue = atof(value);
+            break;
+        case ValueType::Pointer:
+            cfg.intValue = static_cast<int64_t>(strtoull(value, nullptr, 0));
+            break;
+        case ValueType::All:
+            cfg.intValue = atoll(value);
+            cfg.floatValue = atof(value);
+            break;
+        case ValueType::Grouped: {
+            std::string error;
+            if (!cfg.parseGrouped(value, &error))
+                throw std::invalid_argument("Invalid grouped scan expression: " + error);
+            cfg.alignment = 1;
+            break;
+        }
+        case ValueType::Custom:
+            cfg.customFormula = value;
+            cfg.customValueSize = luaValueTypeSize(mapLuaValueType(valueTypeRaw));
+            cfg.alignment = 1;
+            break;
+        default:
+            cfg.intValue = atoll(value);
+            break;
+    }
+
     return cfg;
 }
 
@@ -609,10 +711,19 @@ static int l_createMemScan(lua_State* L) {
             auto* sd = (LuaScanData*)luaL_checkudata(L, 1, "MemScan");
             auto* p = getProc(L);
             if (!p) { lua_pushboolean(L, 0); return 1; }
-            auto cfg = luaScanConfig(L, 2, 3, 4);
-            sd->result = std::make_unique<ScanResult>(sd->scanner.firstScan(*p, cfg));
-            lua_pushboolean(L, 1);
-            return 1;
+            try {
+                auto cfg = luaScanConfig(L, 2, 3, 4);
+                sd->result = std::make_unique<ScanResult>(sd->scanner.firstScan(*p, cfg));
+                lua_pushboolean(L, 1);
+                lua_pushnil(L);
+            } catch (const std::exception& ex) {
+                lua_pushboolean(L, 0);
+                lua_pushstring(L, ex.what());
+            } catch (...) {
+                lua_pushboolean(L, 0);
+                lua_pushstring(L, "scan failed");
+            }
+            return 2;
         });
         lua_setfield(L, -2, "firstScan");
 
@@ -620,10 +731,19 @@ static int l_createMemScan(lua_State* L) {
             auto* sd = (LuaScanData*)luaL_checkudata(L, 1, "MemScan");
             auto* p = getProc(L);
             if (!p || !sd->result) { lua_pushboolean(L, 0); return 1; }
-            auto cfg = luaScanConfig(L, 2, 3, 4);
-            sd->result = std::make_unique<ScanResult>(sd->scanner.nextScan(*p, cfg, *sd->result));
-            lua_pushboolean(L, 1);
-            return 1;
+            try {
+                auto cfg = luaScanConfig(L, 2, 3, 4);
+                sd->result = std::make_unique<ScanResult>(sd->scanner.nextScan(*p, cfg, *sd->result));
+                lua_pushboolean(L, 1);
+                lua_pushnil(L);
+            } catch (const std::exception& ex) {
+                lua_pushboolean(L, 0);
+                lua_pushstring(L, ex.what());
+            } catch (...) {
+                lua_pushboolean(L, 0);
+                lua_pushstring(L, "scan failed");
+            }
+            return 2;
         });
         lua_setfield(L, -2, "nextScan");
 
@@ -884,6 +1004,7 @@ static void registerConstants(lua_State* L) {
     lua_pushinteger(L, 7); lua_setglobal(L, "soChanged");
     lua_pushinteger(L, 8); lua_setglobal(L, "soUnchanged");
     lua_pushinteger(L, static_cast<int>(ScanCompare::SameAsFirst)); lua_setglobal(L, "soSameAsFirst");
+    lua_pushinteger(L, 10); lua_setglobal(L, "soCustom");
 
     // Value types (CE compatible)
     lua_pushinteger(L, 0); lua_setglobal(L, "vtByte");
@@ -896,6 +1017,8 @@ static void registerConstants(lua_State* L) {
     lua_pushinteger(L, 8); lua_setglobal(L, "vtByteArray");
     lua_pushinteger(L, 9); lua_setglobal(L, "vtBinary");
     lua_pushinteger(L, 10); lua_setglobal(L, "vtAll");
+    lua_pushinteger(L, static_cast<int>(ValueType::Grouped)); lua_setglobal(L, "vtGrouped");
+    lua_pushinteger(L, static_cast<int>(ValueType::Custom)); lua_setglobal(L, "vtCustom");
     lua_pushinteger(L, static_cast<int>(ValueType::Pointer)); lua_setglobal(L, "vtPointer");
 
     // Breakpoint types

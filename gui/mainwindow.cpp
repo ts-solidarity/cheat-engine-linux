@@ -312,7 +312,7 @@ void MainWindow::setupUi() {
 
     // Value type
     valueTypeCombo_ = new QComboBox;
-    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary", "All Types", "Pointer"});
+    valueTypeCombo_->addItems({"Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Unicode Text", "Array of Bytes", "Binary", "All Types", "Pointer", "Grouped", "Custom"});
     valueTypeCombo_->setCurrentIndex(2); // 4 Bytes default
     rightLayout->addWidget(valueTypeCombo_);
 
@@ -537,6 +537,11 @@ void MainWindow::onOpenProcess() {
         firstScanBtn_->setEnabled(true);
         resultsModel_->clear();
         lastResult_.reset();
+        undoResult_.reset();
+        lastResultType_ = ValueType::Int32;
+        undoResultType_ = ValueType::Int32;
+        lastResultValueSize_ = 0;
+        undoResultValueSize_ = 0;
         updateScanButtons();
     }
 }
@@ -571,6 +576,8 @@ static ValueType mapValueType(int index) {
         case 9: return ValueType::Binary;
         case 10: return ValueType::All;
         case 11: return ValueType::Pointer;
+        case 12: return ValueType::Grouped;
+        case 13: return ValueType::Custom;
         default: return ValueType::Int32;
     }
 }
@@ -585,6 +592,36 @@ static void applyFloatOptions(ScanConfig& config, QComboBox* roundingCombo, QLin
     double tolerance = toleranceEdit->text().toDouble(&ok);
     if (ok && tolerance > 0.0)
         config.floatTolerance = tolerance;
+}
+
+static size_t resultValueSizeForConfig(const ScanConfig& config) {
+    switch (config.valueType) {
+        case ValueType::Byte:
+            return 1;
+        case ValueType::Int16:
+            return 2;
+        case ValueType::Int32:
+        case ValueType::Float:
+            return 4;
+        case ValueType::Int64:
+        case ValueType::Double:
+        case ValueType::Pointer:
+            return 8;
+        case ValueType::String:
+            return std::max<size_t>(1, config.stringValue.size());
+        case ValueType::UnicodeString:
+            return std::max<size_t>(2, config.stringValue.size() * 2);
+        case ValueType::ByteArray:
+        case ValueType::Binary:
+            return std::max<size_t>(1, config.byteArray.size());
+        case ValueType::Grouped:
+            return std::max<size_t>(1, config.groupedValueSize());
+        case ValueType::Custom:
+            return std::max<size_t>(1, config.customValueSize);
+        case ValueType::All:
+        default:
+            return 8;
+    }
 }
 
 void MainWindow::onFirstScan() {
@@ -610,6 +647,17 @@ void MainWindow::onFirstScan() {
     } else if (config.valueType == ValueType::Binary) {
         config.parseBinary(text.toStdString());
         config.alignment = 1;
+    } else if (config.valueType == ValueType::Grouped) {
+        std::string error;
+        if (!config.parseGrouped(text.toStdString(), &error)) {
+            QMessageBox::warning(this, "Grouped scan", QString::fromStdString(error));
+            return;
+        }
+        config.alignment = 1;
+    } else if (config.valueType == ValueType::Custom) {
+        config.customFormula = text.toStdString();
+        config.customValueSize = std::max<size_t>(1, static_cast<size_t>(config.alignment));
+        config.alignment = 1;
     } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
         config.floatValue = text.toDouble();
     } else if (config.valueType == ValueType::Pointer) {
@@ -621,16 +669,21 @@ void MainWindow::onFirstScan() {
         config.intValue = text.toLongLong();
     }
     applyFloatOptions(config, floatRoundingCombo_, floatToleranceEdit_);
+    size_t resultValueSize = resultValueSizeForConfig(config);
 
     firstScanBtn_->setEnabled(false);
     auto result = std::make_unique<ScanResult>(scanner_.firstScan(*process_, config));
     firstScanBtn_->setEnabled(true);
 
     foundLabel_->setText(QString("Found: %1").arg(result->count()));
-    resultsModel_->setResult(result.get(), config.valueType);
+    resultsModel_->setResult(result.get(), config.valueType, resultValueSize);
 
     undoResult_ = std::move(lastResult_);
+    undoResultType_ = lastResultType_;
+    undoResultValueSize_ = lastResultValueSize_;
     lastResult_ = std::move(result);
+    lastResultType_ = config.valueType;
+    lastResultValueSize_ = resultValueSize;
     updateScanButtons();
 }
 
@@ -652,6 +705,17 @@ void MainWindow::onNextScan() {
     } else if (config.valueType == ValueType::Binary) {
         config.parseBinary(text.toStdString());
         config.alignment = 1;
+    } else if (config.valueType == ValueType::Grouped) {
+        std::string error;
+        if (!config.parseGrouped(text.toStdString(), &error)) {
+            QMessageBox::warning(this, "Grouped scan", QString::fromStdString(error));
+            return;
+        }
+        config.alignment = 1;
+    } else if (config.valueType == ValueType::Custom) {
+        config.customFormula = text.toStdString();
+        config.customValueSize = std::max<size_t>(1, static_cast<size_t>(config.alignment));
+        config.alignment = 1;
     } else if (config.valueType == ValueType::Float || config.valueType == ValueType::Double) {
         config.floatValue = text.toDouble();
     } else if (config.valueType == ValueType::Pointer) {
@@ -672,24 +736,32 @@ void MainWindow::onNextScan() {
             ? config.percentageValue
             : percent2Text.toDouble();
     }
+    size_t resultValueSize = resultValueSizeForConfig(config);
 
     nextScanBtn_->setEnabled(false);
     auto result = std::make_unique<ScanResult>(scanner_.nextScan(*process_, config, *lastResult_));
     nextScanBtn_->setEnabled(true);
 
     foundLabel_->setText(QString("Found: %1").arg(result->count()));
-    resultsModel_->setResult(result.get(), config.valueType);
+    resultsModel_->setResult(result.get(), config.valueType, resultValueSize);
 
     undoResult_ = std::move(lastResult_);
+    undoResultType_ = lastResultType_;
+    undoResultValueSize_ = lastResultValueSize_;
     lastResult_ = std::move(result);
+    lastResultType_ = config.valueType;
+    lastResultValueSize_ = resultValueSize;
     updateScanButtons();
 }
 
 void MainWindow::onUndoScan() {
     if (!undoResult_) return;
     lastResult_ = std::move(undoResult_);
-    auto vt = mapValueType(valueTypeCombo_->currentIndex());
-    resultsModel_->setResult(lastResult_.get(), vt);
+    lastResultType_ = undoResultType_;
+    lastResultValueSize_ = undoResultValueSize_;
+    undoResultType_ = ValueType::Int32;
+    undoResultValueSize_ = 0;
+    resultsModel_->setResult(lastResult_.get(), lastResultType_, lastResultValueSize_);
     foundLabel_->setText(QString("Found: %1").arg(lastResult_->count()));
     updateScanButtons();
 }
@@ -697,8 +769,7 @@ void MainWindow::onUndoScan() {
 void MainWindow::onResultDoubleClicked(const QModelIndex& index) {
     if (!lastResult_) return;
     auto addr = resultsModel_->addressAt(index.row());
-    auto vt = mapValueType(valueTypeCombo_->currentIndex());
-    addressListModel_->addEntry(addr, vt);
+    addressListModel_->addEntry(addr, lastResultType_);
 }
 
 void MainWindow::onDeleteAddresses() {
@@ -928,16 +999,18 @@ void MainWindow::updateScanButtons() {
 
 ScanResultsModel::ScanResultsModel(QObject* parent) : QAbstractTableModel(parent) {}
 
-void ScanResultsModel::setResult(ScanResult* result, ValueType vt) {
+void ScanResultsModel::setResult(ScanResult* result, ValueType vt, size_t valueSize) {
     beginResetModel();
     result_ = result;
     valueType_ = vt;
+    valueSize_ = valueSize;
     endResetModel();
 }
 
 void ScanResultsModel::clear() {
     beginResetModel();
     result_ = nullptr;
+    valueSize_ = 0;
     endResetModel();
 }
 
@@ -967,19 +1040,31 @@ QVariant ScanResultsModel::data(const QModelIndex& index, int role) const {
             case ValueType::Pointer: vs = sizeof(uintptr_t); break;
             case ValueType::Float:  vs = 4; break;
             case ValueType::Double: vs = 8; break;
+            case ValueType::Grouped:
+            case ValueType::Custom:
+                vs = std::max<size_t>(1, valueSize_);
+                break;
             default: break;
         }
-        uint8_t buf[8] = {};
-        result_->value(index.row(), buf, vs);
+        std::vector<uint8_t> buf(vs);
+        result_->value(index.row(), buf.data(), vs);
 
         switch (valueType_) {
             case ValueType::Byte:   return QString::number(buf[0]);
-            case ValueType::Int16:  { int16_t v; memcpy(&v, buf, 2); return QString::number(v); }
-            case ValueType::Int32:  { int32_t v; memcpy(&v, buf, 4); return QString::number(v); }
-            case ValueType::Int64:  { int64_t v; memcpy(&v, buf, 8); return QString::number(v); }
-            case ValueType::Pointer:{ uintptr_t v; memcpy(&v, buf, sizeof(v)); return QString("0x%1").arg(v, 0, 16); }
-            case ValueType::Float:  { float v; memcpy(&v, buf, 4); return QString::number(v, 'f', 4); }
-            case ValueType::Double: { double v; memcpy(&v, buf, 8); return QString::number(v, 'f', 6); }
+            case ValueType::Int16:  { int16_t v; memcpy(&v, buf.data(), 2); return QString::number(v); }
+            case ValueType::Int32:  { int32_t v; memcpy(&v, buf.data(), 4); return QString::number(v); }
+            case ValueType::Int64:  { int64_t v; memcpy(&v, buf.data(), 8); return QString::number(v); }
+            case ValueType::Pointer:{ uintptr_t v; memcpy(&v, buf.data(), sizeof(v)); return QString("0x%1").arg(v, 0, 16); }
+            case ValueType::Float:  { float v; memcpy(&v, buf.data(), 4); return QString::number(v, 'f', 4); }
+            case ValueType::Double: { double v; memcpy(&v, buf.data(), 8); return QString::number(v, 'f', 6); }
+            case ValueType::Grouped:
+            case ValueType::Custom: {
+                QString hex;
+                hex.reserve(static_cast<int>(vs * 2));
+                for (size_t i = 0; i < vs; ++i)
+                    hex += QString("%1").arg(buf[i], 2, 16, QChar('0'));
+                return hex;
+            }
             default: return "?";
         }
     }
@@ -1052,6 +1137,8 @@ static ValueType strToType(const QString& s) {
             case 9: return ValueType::Binary;
             case 10: return ValueType::All;
             case 13: return ValueType::Pointer;
+            case 11: return ValueType::Grouped;
+            case 12: return ValueType::Custom;
             default: break;
         }
     }

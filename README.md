@@ -18,6 +18,7 @@ This is a from-scratch reimplementation of [Cheat Engine](https://cheatengine.or
 ### Memory Scanning
 - Multi-threaded scanner (uses all CPU cores)
 - Value types: byte, int16, int32, int64, float, double, string, array of bytes, binary, "all types"
+- Grouped scans (`vtGrouped`) and Lua formula scans (`soCustom`)
 - AOB scanning with `??` wildcards
 - Scan comparisons: exact, greater, less, between, changed, unchanged, increased, decreased, unknown
 - Handles processes with 1GB+ of memory in under a second
@@ -90,8 +91,13 @@ f:show()
 
 -- Scan memory
 local ms = createMemScan()
-ms:firstScan(soExactValue, vtDword, 0, "100")
+ms:firstScan(soExactValue, vtDword, "100")
 print("Found: " .. ms:getFoundCount())
+
+-- Grouped/custom scans
+ms:firstScan(soExactValue, vtGrouped, "i32:1337@0;float:2.5@4;byte:66@8")
+ms:firstScan(soCustom, vtDword,
+  "local b1,b2,b3,b4=string.byte(current,1,4); return b1==0xCD and b2==0xAB and b3==0x34 and b4==0x12")
 ```
 
 ### Code Analysis
@@ -152,6 +158,8 @@ CE_SPEED=2.0 LD_PRELOAD=build/libspeedhack.so ./game
 ```
 cescan list                              List all processes
 cescan scan <pid> --type i32 --value 100 First scan for int32 = 100
+cescan scan <pid> --type grouped --value "i32:100@0;float:1.5@4" Grouped scan
+cescan scan <pid> --type custom --value-size 4 --value "local b1,b2,b3,b4=string.byte(current,1,4); return b1==0xCD and b2==0xAB and b3==0x34 and b4==0x12" Custom Lua formula scan
 cescan scan <pid> --type aob --value "7F 45 ?? 46"  AOB scan with wildcards
 cescan read <pid> <addr> [size]          Hex dump memory
 cescan write <pid> <addr> <val> --type i32  Write value

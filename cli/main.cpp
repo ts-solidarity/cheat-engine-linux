@@ -40,9 +40,12 @@ static void usage() {
         "  regions <pid>                 List memory regions\n"
         "\n"
         "Scan options:\n"
-        "  --type <type>     byte, i16, i32, i64, pointer, float, double, string, unicode, aob, binary, all (default: i32)\n"
+        "  --type <type>     byte, i16, i32, i64, pointer, float, double, string, unicode, aob, binary, all, grouped, custom (default: i32)\n"
         "  --value <val>     Value to search for\n"
         "  --value2 <val>    Second value (for 'between')\n"
+        "  --value-size <n>  Custom value byte size (for --type custom, default: 4)\n"
+        "                    grouped --value format: type:value@offset;type:value@offset\n"
+        "                    custom --value must be a Lua chunk returning true/false\n"
         "  --compare <cmp>   exact, greater, less, between, changed,\n"
         "                    unchanged, increased, decreased, unknown, samefirst\n"
         "  --previous <dir>  Previous scan result directory (for next scan)\n"
@@ -71,6 +74,8 @@ static ValueType parseType(const char* s) {
     if (!strcmp(s, "aob"))    return ValueType::ByteArray;
     if (!strcmp(s, "binary")) return ValueType::Binary;
     if (!strcmp(s, "all"))    return ValueType::All;
+    if (!strcmp(s, "grouped") || !strcmp(s, "group")) return ValueType::Grouped;
+    if (!strcmp(s, "custom")) return ValueType::Custom;
     fprintf(stderr, "Unknown type: %s\n", s);
     exit(1);
 }
@@ -242,11 +247,13 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
     const char* percent2Str = nullptr;
     const char* roundingStr = nullptr;
     const char* toleranceStr = nullptr;
+    const char* valueSizeStr = nullptr;
 
     static struct option long_opts[] = {
         {"type",     required_argument, nullptr, 't'},
         {"value",    required_argument, nullptr, 'v'},
         {"value2",   required_argument, nullptr, '2'},
+        {"value-size", required_argument, nullptr, 's'},
         {"compare",  required_argument, nullptr, 'c'},
         {"previous", required_argument, nullptr, 'p'},
         {"percent",  required_argument, nullptr, 'P'},
@@ -260,11 +267,12 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
 
     optind = 1; // reset getopt
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:v:2:c:p:P:q:r:T:a:w", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:v:2:s:c:p:P:q:r:T:a:w", long_opts, nullptr)) != -1) {
         switch (opt) {
             case 't': config.valueType = parseType(optarg); break;
             case 'v': valueStr = optarg; break;
             case '2': value2Str = optarg; break;
+            case 's': valueSizeStr = optarg; break;
             case 'c': config.compareType = parseCompare(optarg); break;
             case 'p': previousDir = optarg; break;
             case 'P': percentStr = optarg; break;
@@ -275,6 +283,9 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
             case 'w': config.scanWritableOnly = true; break;
         }
     }
+
+    if (valueSizeStr)
+        config.customValueSize = std::max<size_t>(1, strtoull(valueSizeStr, nullptr, 0));
 
     if (valueStr) {
         if (config.valueType == ValueType::String || config.valueType == ValueType::UnicodeString) {
@@ -299,10 +310,28 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
                 config.intValue2 = atoll(value2Str);
                 config.floatValue2 = atof(value2Str);
             }
+        } else if (config.valueType == ValueType::Grouped) {
+            std::string error;
+            if (!config.parseGrouped(valueStr, &error)) {
+                fprintf(stderr, "Invalid grouped expression: %s\n", error.c_str());
+                return 1;
+            }
+        } else if (config.valueType == ValueType::Custom) {
+            config.customFormula = valueStr;
+            if (config.compareType == ScanCompare::Exact && config.customFormula.empty()) {
+                fprintf(stderr, "Custom scan with exact compare requires a Lua formula in --value\n");
+                return 1;
+            }
         } else {
             config.intValue = atoll(valueStr);
             if (value2Str) config.intValue2 = atoll(value2Str);
         }
+    } else if (config.valueType == ValueType::Grouped) {
+        fprintf(stderr, "Grouped scan requires --value expression\n");
+        return 1;
+    } else if (config.valueType == ValueType::Custom && config.compareType == ScanCompare::Exact) {
+        fprintf(stderr, "Custom exact scan requires --value Lua formula\n");
+        return 1;
     }
 
     if (percentStr) {
@@ -325,16 +354,20 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         printf("Results: %s\n", result.directory().c_str());
 
         size_t vs = typeSize(config.valueType);
+        if (config.valueType == ValueType::Grouped)
+            vs = std::max<size_t>(1, config.groupedValueSize());
+        else if (config.valueType == ValueType::Custom)
+            vs = std::max<size_t>(1, config.customValueSize);
         size_t show = std::min(result.count(), size_t(20));
         for (size_t i = 0; i < show; ++i) {
             uintptr_t addr = result.address(i);
-            uint8_t val[8];
-            result.value(i, val, vs);
+            std::vector<uint8_t> val(vs);
+            result.value(i, val.data(), vs);
             printf("  0x%lx = ", addr);
             switch (config.valueType) {
-                case ValueType::Int32: { int32_t v; memcpy(&v, val, 4); printf("%d", v); break; }
-                case ValueType::Pointer: { uintptr_t v; memcpy(&v, val, sizeof(v)); printf("0x%lx", v); break; }
-                case ValueType::Float: { float v; memcpy(&v, val, 4); printf("%f", v); break; }
+                case ValueType::Int32: { int32_t v; memcpy(&v, val.data(), 4); printf("%d", v); break; }
+                case ValueType::Pointer: { uintptr_t v; memcpy(&v, val.data(), sizeof(v)); printf("0x%lx", v); break; }
+                case ValueType::Float: { float v; memcpy(&v, val.data(), 4); printf("%f", v); break; }
                 default: {
                     for (size_t j = 0; j < vs; ++j) printf("%02x", val[j]);
                 }
@@ -350,16 +383,20 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         printf("Results: %s\n", result.directory().c_str());
 
         size_t vs = typeSize(config.valueType);
+        if (config.valueType == ValueType::Grouped)
+            vs = std::max<size_t>(1, config.groupedValueSize());
+        else if (config.valueType == ValueType::Custom)
+            vs = std::max<size_t>(1, config.customValueSize);
         size_t show = std::min(result.count(), size_t(20));
         for (size_t i = 0; i < show; ++i) {
             uintptr_t addr = result.address(i);
-            uint8_t val[8];
-            result.value(i, val, vs);
+            std::vector<uint8_t> val(vs);
+            result.value(i, val.data(), vs);
             printf("  0x%lx = ", addr);
             switch (config.valueType) {
-                case ValueType::Int32: { int32_t v; memcpy(&v, val, 4); printf("%d", v); break; }
-                case ValueType::Pointer: { uintptr_t v; memcpy(&v, val, sizeof(v)); printf("0x%lx", v); break; }
-                case ValueType::Float: { float v; memcpy(&v, val, 4); printf("%f", v); break; }
+                case ValueType::Int32: { int32_t v; memcpy(&v, val.data(), 4); printf("%d", v); break; }
+                case ValueType::Pointer: { uintptr_t v; memcpy(&v, val.data(), sizeof(v)); printf("0x%lx", v); break; }
+                case ValueType::Float: { float v; memcpy(&v, val.data(), 4); printf("%f", v); break; }
                 default: {
                     for (size_t j = 0; j < vs; ++j) printf("%02x", val[j]);
                 }
