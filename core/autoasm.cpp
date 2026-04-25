@@ -85,6 +85,18 @@ static std::string stripInlineComment(std::string line) {
     return trim(line);
 }
 
+static bool runScriptHooks(const std::vector<AutoAssembler::ScriptHook>& hooks,
+    std::string& code, std::vector<std::string>& log, std::string& error, const char* phase) {
+    for (size_t i = 0; i < hooks.size(); ++i) {
+        if (!hooks[i](code, log, error)) {
+            if (error.empty())
+                error = std::string("Auto-assembler ") + phase + " hook failed at index " + std::to_string(i);
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool parseWholeUnsigned(const std::string& text, int base, uint64_t& value) {
     auto s = trim(text);
     if (s.empty())
@@ -865,6 +877,24 @@ void AutoAssembler::unregisterCommand(const std::string& name) {
     customCommands_.erase(normalizeCommandName(name));
 }
 
+void AutoAssembler::addPreprocessorHook(ScriptHook hook) {
+    if (hook)
+        preprocessorHooks_.push_back(std::move(hook));
+}
+
+void AutoAssembler::addPostprocessorHook(ScriptHook hook) {
+    if (hook)
+        postprocessorHooks_.push_back(std::move(hook));
+}
+
+void AutoAssembler::clearPreprocessorHooks() {
+    preprocessorHooks_.clear();
+}
+
+void AutoAssembler::clearPostprocessorHooks() {
+    postprocessorHooks_.clear();
+}
+
 // ── Main execution ──
 
 AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& script) {
@@ -878,10 +908,16 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         enableCode = script;
     }
 
+    if (!runScriptHooks(preprocessorHooks_, enableCode, result.log, result.error, "preprocessor"))
+        return result;
+
     std::string expandedEnableCode;
     if (!expandStructDefinitions(enableCode, expandedEnableCode, result.log, result.error))
         return result;
     enableCode = std::move(expandedEnableCode);
+
+    if (!runScriptHooks(postprocessorHooks_, enableCode, result.log, result.error, "postprocessor"))
+        return result;
 
     // ── Phase 1: Parse directives ──
     std::vector<Alloc> allocs;
@@ -1381,10 +1417,16 @@ AutoAsmResult AutoAssembler::check(const std::string& script) {
     auto enableCode = extractSection(script, "ENABLE");
     if (enableCode.empty()) enableCode = script;
 
+    if (!runScriptHooks(preprocessorHooks_, enableCode, result.log, result.error, "preprocessor"))
+        return result;
+
     std::string expandedEnableCode;
     if (!expandStructDefinitions(enableCode, expandedEnableCode, result.log, result.error))
         return result;
     enableCode = std::move(expandedEnableCode);
+
+    if (!runScriptHooks(postprocessorHooks_, enableCode, result.log, result.error, "postprocessor"))
+        return result;
 
     std::vector<Alloc> allocs;
     std::vector<Label> labels;

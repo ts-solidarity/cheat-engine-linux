@@ -553,6 +553,59 @@ static void test_autoassembler_custom_commands(pid_t pid) {
     printf("  custom commands: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_processing_hooks(pid_t pid) {
+    printf("\n── Test: AutoAssembler processing hooks ──\n");
+
+    LinuxProcessHandle proc(pid);
+    auto allocResult = proc.allocate(4096, MemProt::All);
+    if (!allocResult) {
+        printf("  processing hooks: FAILED\n");
+        return;
+    }
+    uintptr_t addr = *allocResult;
+
+    AutoAssembler aa;
+    aa.addPreprocessorHook([](std::string& code, std::vector<std::string>& log, std::string&) {
+        code += "\nnop 1\n";
+        log.push_back("pre-hook");
+        return true;
+    });
+    aa.addPostprocessorHook([](std::string& code, std::vector<std::string>& log, std::string&) {
+        code += "\ndb 2A\n";
+        log.push_back("post-hook");
+        return true;
+    });
+
+    char script[128];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "%lx:\n",
+        addr);
+
+    auto result = aa.execute(proc, script);
+    uint8_t actual[2] = {};
+    proc.read(addr, actual, sizeof(actual));
+    const uint8_t expected[] = {0x90, 0x2a};
+
+    auto checkResult = aa.check(script);
+
+    AutoAssembler failing;
+    failing.addPostprocessorHook([](std::string&, std::vector<std::string>&, std::string& error) {
+        error = "post hook parse stop";
+        return false;
+    });
+    auto failedCheck = failing.check("[ENABLE]\nnop 1\n");
+
+    bool ok = result.success &&
+        std::memcmp(actual, expected, sizeof(actual)) == 0 &&
+        checkResult.success &&
+        !failedCheck.success &&
+        failedCheck.error == "post hook parse stop";
+
+    proc.free(addr, 4096);
+    printf("  processing hooks: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_loadbinary(pid_t pid) {
     printf("\n── Test: AutoAssembler loadbinary ──\n");
 
@@ -1751,6 +1804,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_nop_fillmem(targetPid);
     test_autoassembler_ds(targetPid);
     test_autoassembler_custom_commands(targetPid);
+    test_autoassembler_processing_hooks(targetPid);
     test_autoassembler_loadbinary(targetPid);
     test_autoassembler_loadlibrary(targetPid);
     test_autoassembler_struct_definitions(targetPid);

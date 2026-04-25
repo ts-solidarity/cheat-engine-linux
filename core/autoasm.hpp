@@ -35,6 +35,8 @@ public:
     using CustomCommandHandler = std::function<bool(const std::string& args,
         std::vector<std::string>& outputLines, std::vector<std::string>& log,
         std::string& error)>;
+    using ScriptHook = std::function<bool(std::string& code,
+        std::vector<std::string>& log, std::string& error)>;
 
     AutoAssembler() = default;
 
@@ -55,6 +57,12 @@ public:
     /// Register a parser extension command. Command names are case-insensitive.
     void registerCommand(const std::string& name, CustomCommandHandler handler);
     void unregisterCommand(const std::string& name);
+
+    /// Register script transformation hooks for plugin-style preprocessing.
+    void addPreprocessorHook(ScriptHook hook);
+    void addPostprocessorHook(ScriptHook hook);
+    void clearPreprocessorHooks();
+    void clearPostprocessorHooks();
 
 private:
     // ── Internal types ──
@@ -84,6 +92,8 @@ private:
     std::unordered_map<std::string, uintptr_t> globalSymbols_;
     std::unordered_map<std::string, DisableInfo::AllocEntry> knownAllocations_;
     std::unordered_map<std::string, CustomCommandHandler> customCommands_;
+    std::vector<ScriptHook> preprocessorHooks_;
+    std::vector<ScriptHook> postprocessorHooks_;
     Assembler asm64_{AsmArch::X86_64};
 };
 

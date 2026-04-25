@@ -72,7 +72,7 @@
 - [ ] Forward label resolution with NOP padding (multi-pass)
 - [x] Near-allocation preference (within ±2GB for short jumps)
 - [x] Custom registered commands (plugin-extensible)
-- [ ] Auto-assembler prologues (pre/post processing hooks)
+- [x] Auto-assembler prologues (pre/post processing hooks)
 
 Completed in the 2026-04-24 main merge:
 - `aobscanmodule`, `aobscanregion`, and `aobscanall`
@@ -84,6 +84,8 @@ Completed in the 2026-04-24 main merge:
 Note: `loadlibrary(path)` now uses the Linux ptrace/dlopen injector from auto-assembler scripts, validates the target .so path, and has a regression test against the built speedhack plugin.
 
 Note: custom auto-assembler commands can now be registered from C++ with case-insensitive names; handlers can expand into normal auto-assembler lines, append log entries, and fail syntax checking with explicit errors.
+
+Note: auto-assembler preprocessor and postprocessor hooks now transform the extracted enable section for both execution and syntax checks, with explicit hook failure errors.
 
 Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field offsets and struct sizes, exposing both `struct.field` and plain field names as script symbols.
 
