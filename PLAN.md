@@ -58,7 +58,7 @@
 - [x] Breakpoint list manager window
 - [x] Stack trace window
 - [x] Register editor window (modify registers live)
-- [ ] Floating point register panel (XMM/YMM)
+- [x] Floating point register panel (XMM/YMM)
 
 **1.3 Complete Auto-Assembler**
 - [ ] `createthread(address)` — remote thread creation via ptrace
@@ -215,6 +215,8 @@ Note: Lua thread helpers now expose `createThread`, `synchronize`, and `queue` a
 Note: the address-list context menu now includes a hotkey configuration dialog backed by `QKeySequenceEdit`; configured keys are preserved in address-list JSON and .CT save/load conversion.
 
 Note: .CT XML now writes CE-style textual variable types such as `4 Bytes`, `Float`, and `Array of byte`, while the loader still accepts older numeric type IDs for backward compatibility.
+
+Note: the register editor now includes a read-only floating-point/SIMD panel populated from Linux `PTRACE_GETREGSET` xstate data, showing XMM low 128-bit values and YMM high 128-bit values when the target exposes AVX state.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

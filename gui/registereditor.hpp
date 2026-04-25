@@ -16,12 +16,14 @@ public:
 private:
     void populateThreads();
     void refreshRegisters();
+    void refreshFloatingPointRegisters(pid_t tid);
     void applyRegisters();
 
     ce::ProcessHandle* proc_;
     QComboBox* threadCombo_;
     QLabel* statusLabel_;
     QTableWidget* table_;
+    QTableWidget* fpTable_;
     ce::CpuContext context_{};
 };
 

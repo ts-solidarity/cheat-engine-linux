@@ -2,15 +2,26 @@
 
 #include "platform/linux/ptrace_wrapper.hpp"
 
+#include <QAbstractItemView>
 #include <QFont>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <array>
+#include <cerrno>
+#include <cstring>
+#include <elf.h>
 #include <iterator>
+#include <sys/ptrace.h>
+#include <sys/uio.h>
 
 namespace ce::gui {
 namespace {
+
+#ifndef NT_X86_XSTATE
+#define NT_X86_XSTATE 0x202
+#endif
 
 struct RegisterField {
     const char* name;
@@ -28,6 +39,14 @@ constexpr RegisterField kRegisters[] = {
 
 QString hexValue(uint64_t value) {
     return QString("%1").arg(value, 16, 16, QChar('0'));
+}
+
+QString bytesToHex(const uint8_t* data, size_t size) {
+    QString out;
+    out.reserve((int)size * 2);
+    for (size_t i = 0; i < size; ++i)
+        out += QString("%1").arg(data[i], 2, 16, QChar('0'));
+    return out;
 }
 
 } // namespace
@@ -69,6 +88,23 @@ RegisterEditorWindow::RegisterEditorWindow(ProcessHandle* proc, QWidget* parent)
     }
     layout->addWidget(table_);
 
+    auto* fpLabel = new QLabel("Floating point / SIMD registers");
+    layout->addWidget(fpLabel);
+
+    fpTable_ = new QTableWidget;
+    fpTable_->setColumnCount(3);
+    fpTable_->setHorizontalHeaderLabels({"Register", "XMM low 128", "YMM high 128"});
+    fpTable_->horizontalHeader()->setStretchLastSection(true);
+    fpTable_->setFont(QFont("Monospace", 9));
+    fpTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    fpTable_->setRowCount(16);
+    for (int row = 0; row < 16; ++row) {
+        fpTable_->setItem(row, 0, new QTableWidgetItem(QString("XMM%1/YMM%1").arg(row)));
+        fpTable_->setItem(row, 1, new QTableWidgetItem("unavailable"));
+        fpTable_->setItem(row, 2, new QTableWidgetItem("unavailable"));
+    }
+    layout->addWidget(fpTable_);
+
     setCentralWidget(central);
     populateThreads();
     refreshRegisters();
@@ -94,8 +130,8 @@ void RegisterEditorWindow::refreshRegisters() {
     }
 
     auto context = debugger.getContext(tid);
-    debugger.detach();
     if (!context) {
+        debugger.detach();
         statusLabel_->setText("Could not read thread context.");
         return;
     }
@@ -103,7 +139,43 @@ void RegisterEditorWindow::refreshRegisters() {
     context_ = *context;
     for (int row = 0; row < (int)std::size(kRegisters); ++row)
         table_->item(row, 1)->setText(hexValue(context_.*(kRegisters[row].member)));
+    refreshFloatingPointRegisters(tid);
+    debugger.detach();
     statusLabel_->setText(QString("Loaded TID %1").arg(tid));
+}
+
+void RegisterEditorWindow::refreshFloatingPointRegisters(pid_t tid) {
+    std::array<uint8_t, 4096> xstate{};
+    iovec iov{ xstate.data(), xstate.size() };
+    if (ptrace(PTRACE_GETREGSET, tid, (void*)NT_X86_XSTATE, &iov) < 0) {
+        auto error = QString("unavailable: %1").arg(strerror(errno));
+        for (int row = 0; row < fpTable_->rowCount(); ++row) {
+            fpTable_->item(row, 1)->setText(error);
+            fpTable_->item(row, 2)->setText(error);
+        }
+        return;
+    }
+
+    constexpr size_t fxsaveXmmOffset = 160;
+    constexpr size_t xsaveHeaderOffset = 512;
+    constexpr size_t ymmHighOffset = 576;
+    uint64_t xstateMask = 0;
+    if (iov.iov_len >= xsaveHeaderOffset + sizeof(xstateMask))
+        std::memcpy(&xstateMask, xstate.data() + xsaveHeaderOffset, sizeof(xstateMask));
+    bool hasYmm = (xstateMask & (1ULL << 2)) != 0 && iov.iov_len >= ymmHighOffset + 16 * 16;
+
+    for (int row = 0; row < fpTable_->rowCount(); ++row) {
+        auto xmmOffset = fxsaveXmmOffset + (size_t)row * 16;
+        if (iov.iov_len >= xmmOffset + 16)
+            fpTable_->item(row, 1)->setText(bytesToHex(xstate.data() + xmmOffset, 16));
+        else
+            fpTable_->item(row, 1)->setText("unavailable");
+
+        if (hasYmm)
+            fpTable_->item(row, 2)->setText(bytesToHex(xstate.data() + ymmHighOffset + (size_t)row * 16, 16));
+        else
+            fpTable_->item(row, 2)->setText("unavailable");
+    }
 }
 
 void RegisterEditorWindow::applyRegisters() {
