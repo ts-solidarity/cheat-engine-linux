@@ -55,6 +55,24 @@ size_t defaultSizeFor(ValueType type, size_t explicitSize) {
     }
 }
 
+ValueType suggestedTypeForRun(size_t size) {
+    switch (size) {
+        case 1: return ValueType::Byte;
+        case 2: return ValueType::Int16;
+        case 4: return ValueType::Int32;
+        case 8: return ValueType::Int64;
+        default: return ValueType::ByteArray;
+    }
+}
+
+bool isReadablePointer(ProcessHandle& proc, uintptr_t address) {
+    auto region = proc.queryRegion(address);
+    return region && (region->protection & MemProt::Read) &&
+        address >= region->base &&
+        region->size >= sizeof(uintptr_t) &&
+        address <= region->base + region->size - sizeof(uintptr_t);
+}
+
 } // namespace
 
 bool saveStructureTemplate(const StructureDefinition& structure, const std::string& path) {
@@ -144,6 +162,85 @@ std::vector<StructureFieldDiff> compareStructureSnapshots(const StructureDefinit
         diffs.push_back(std::move(diff));
     }
     return diffs;
+}
+
+std::vector<StructureDetectedField> autoDetectStructureFields(const std::vector<uint8_t>& before,
+    const std::vector<uint8_t>& after)
+{
+    std::vector<StructureDetectedField> fields;
+    const size_t size = std::min(before.size(), after.size());
+    if (size == 0)
+        return fields;
+
+    size_t start = 0;
+    bool currentChanged = before[0] != after[0];
+    for (size_t i = 1; i < size; ++i) {
+        bool changed = before[i] != after[i];
+        if (changed == currentChanged)
+            continue;
+
+        const size_t runSize = i - start;
+        fields.push_back(StructureDetectedField{
+            .offset = start,
+            .size = runSize,
+            .changed = currentChanged,
+            .suggestedType = suggestedTypeForRun(runSize),
+        });
+        start = i;
+        currentChanged = changed;
+    }
+
+    const size_t runSize = size - start;
+    fields.push_back(StructureDetectedField{
+        .offset = start,
+        .size = runSize,
+        .changed = currentChanged,
+        .suggestedType = suggestedTypeForRun(runSize),
+    });
+    return fields;
+}
+
+std::vector<StructurePointerChain> followStructurePointers(ProcessHandle& proc,
+    uintptr_t baseAddress,
+    const StructureDefinition& structure,
+    size_t maxDepth)
+{
+    std::vector<StructurePointerChain> chains;
+    if (maxDepth == 0)
+        return chains;
+
+    for (const auto& field : structure.fields) {
+        if (field.type != ValueType::Pointer)
+            continue;
+
+        uintptr_t pointer = 0;
+        auto read = proc.read(baseAddress + field.offset, &pointer, sizeof(pointer));
+        if (!read || *read != sizeof(pointer) || pointer == 0)
+            continue;
+
+        StructurePointerChain chain;
+        chain.fieldName = field.name;
+        chain.fieldOffset = field.offset;
+        chain.addresses.push_back(pointer);
+
+        uintptr_t current = pointer;
+        for (size_t depth = 1; depth < maxDepth; ++depth) {
+            if (!isReadablePointer(proc, current))
+                break;
+
+            uintptr_t next = 0;
+            auto nextRead = proc.read(current, &next, sizeof(next));
+            if (!nextRead || *nextRead != sizeof(next) || next == 0)
+                break;
+
+            chain.addresses.push_back(next);
+            current = next;
+        }
+
+        chains.push_back(std::move(chain));
+    }
+
+    return chains;
 }
 
 } // namespace ce

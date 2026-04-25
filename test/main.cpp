@@ -293,8 +293,8 @@ static void test_structure_tools() {
 
     std::vector<uint8_t> before(24, 0);
     std::vector<uint8_t> after = before;
-    int32_t oldHealth = 100;
-    int32_t newHealth = 75;
+    int32_t oldHealth = 0x11223344;
+    int32_t newHealth = 0x55667788;
     float mana = 12.5f;
     std::memcpy(before.data(), &oldHealth, sizeof(oldHealth));
     std::memcpy(after.data(), &newHealth, sizeof(newHealth));
@@ -306,9 +306,35 @@ static void test_structure_tools() {
         diffs[1].name == "mana value" && !diffs[1].changed &&
         diffs[2].name == "target" && !diffs[2].changed;
 
+    auto detected = autoDetectStructureFields(before, after);
+    bool detectOk = detected.size() == 2 &&
+        detected[0].offset == 0 && detected[0].size == 4 &&
+        detected[0].changed && detected[0].suggestedType == ValueType::Int32 &&
+        detected[1].offset == 4 && detected[1].size == 20 &&
+        !detected[1].changed;
+
+    const uintptr_t rootBase = 0x80000000;
+    const uintptr_t nodeA = rootBase + 0x100;
+    const uintptr_t nodeB = rootBase + 0x200;
+    std::vector<uint8_t> memory(0x1000, 0);
+    std::memcpy(memory.data() + 16, &nodeA, sizeof(nodeA));
+    std::memcpy(memory.data() + 0x100, &nodeB, sizeof(nodeB));
+    FakeProcessHandle proc({
+        {{rootBase, memory.size(), MemProt::ReadWrite, MemType::Private, MemState::Committed, "[structure]"}, memory},
+    }, {});
+    auto chains = followStructurePointers(proc, rootBase, structure, 3);
+    bool pointerOk = chains.size() == 1 &&
+        chains[0].fieldName == "target" &&
+        chains[0].fieldOffset == 16 &&
+        chains[0].addresses.size() == 2 &&
+        chains[0].addresses[0] == nodeA &&
+        chains[0].addresses[1] == nodeB;
+
     printf("  template save/load: %s\n", (saveOk && loadOk) ? "OK" : "FAILED");
     printf("  C++ struct export: %s\n", cppOk ? "OK" : "FAILED");
     printf("  snapshot comparison: %s\n", diffOk ? "OK" : "FAILED");
+    printf("  changed field detection: %s\n", detectOk ? "OK" : "FAILED");
+    printf("  pointer chain following: %s\n", pointerOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {
