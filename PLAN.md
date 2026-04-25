@@ -143,7 +143,7 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [x] GUI forms: createForm, createButton, createLabel, createEdit, createCheckBox, createListView
 - [x] GUI component properties: setProperty, getProperty, component.Caption, component.Visible, etc.
 - [x] GUI events: OnClick, OnChange, OnClose, etc. bound to Lua functions
-- [ ] Utility: showMessage, inputQuery, messageDialog, getScreenCanvas
+- [x] Utility: showMessage, inputQuery, messageDialog, getScreenCanvas
 - [x] Timer: createTimer, timer.Enabled, timer.Interval, timer.OnTimer
 - [x] File I/O: readFile, writeFile, getCheatEngineDir, getTempDir
 - [ ] Table: getTableEntry, setTableEntry, addressList manipulation
@@ -187,6 +187,8 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 Note: referenced strings, referenced functions, function summaries, call graph edges, jumps, RIP-relative instructions, assembly pattern scanning, and code caves are exposed through a combined Code References window. The analyzer now resolves RIP-relative operands and direct call targets.
 
 Note: heap enumeration is implemented as a Linux Heap Regions window over `/proc/<pid>/maps`, showing `[heap]` and writable anonymous private mappings.
+
+Note: Lua utility bindings now include `messageDialog` modal-result constants and a headless `getScreenCanvas` canvas object with basic drawing/text methods for script compatibility.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

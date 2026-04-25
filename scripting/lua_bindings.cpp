@@ -508,6 +508,129 @@ static int l_showMessage(lua_State* L) {
     return 0;
 }
 
+static int modalResultForButton(lua_Integer button) {
+    switch (button) {
+        case 2: return 2;  // cancel
+        case 3: return 3;  // abort
+        case 4: return 4;  // retry
+        case 5: return 5;  // ignore
+        case 6: return 6;  // yes
+        case 7: return 7;  // no
+        case 8: return 8;  // all
+        case 9: return 9;  // no to all
+        case 10: return 10; // yes to all
+        case 11: return 11; // close
+        default: return 1;  // ok
+    }
+}
+
+static int l_messageDialog(lua_State* L) {
+    const char* msg = luaL_checkstring(L, 1);
+    int dialogType = (int)luaL_optinteger(L, 2, 0);
+    (void)dialogType;
+
+    int result = 1; // mrOK
+    if (lua_gettop(L) >= 3 && lua_isinteger(L, 3))
+        result = modalResultForButton(lua_tointeger(L, 3));
+
+    fprintf(stderr, "[CE Lua] %s\n", msg);
+    lua_pushinteger(L, result);
+    return 1;
+}
+
+static void appendCanvasCommand(lua_State* L, const char* command) {
+    lua_getfield(L, 1, "commands");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, 1, "commands");
+    }
+
+    lua_Integer nextIndex = (lua_Integer)lua_rawlen(L, -1) + 1;
+    lua_pushstring(L, command);
+    lua_rawseti(L, -2, nextIndex);
+    lua_pop(L, 1);
+}
+
+static int l_canvas_noop(lua_State* L) {
+    const char* command = lua_tostring(L, lua_upvalueindex(1));
+    appendCanvasCommand(L, command ? command : "draw");
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_canvas_getTextWidth(lua_State* L) {
+    size_t len = 0;
+    luaL_checklstring(L, 2, &len);
+    lua_pushinteger(L, (lua_Integer)len * 8);
+    return 1;
+}
+
+static int l_canvas_getTextHeight(lua_State* L) {
+    lua_pushinteger(L, 16);
+    return 1;
+}
+
+static int l_canvas_getPixel(lua_State* L) {
+    lua_pushinteger(L, 0);
+    return 1;
+}
+
+static void setCanvasMethod(lua_State* L, const char* name, lua_CFunction fn) {
+    lua_pushstring(L, name);
+    lua_pushcclosure(L, fn, 1);
+    lua_setfield(L, -2, name);
+}
+
+static void setCanvasFunction(lua_State* L, const char* name, lua_CFunction fn) {
+    lua_pushcfunction(L, fn);
+    lua_setfield(L, -2, name);
+}
+
+static int l_getScreenCanvas(lua_State* L) {
+    lua_newtable(L);
+    lua_pushinteger(L, 1920); lua_setfield(L, -2, "Width");
+    lua_pushinteger(L, 1080); lua_setfield(L, -2, "Height");
+
+    lua_newtable(L);
+    lua_setfield(L, -2, "commands");
+
+    lua_newtable(L);
+    lua_pushinteger(L, 0xffffff); lua_setfield(L, -2, "Color");
+    lua_setfield(L, -2, "Pen");
+
+    lua_newtable(L);
+    lua_pushinteger(L, 0x000000); lua_setfield(L, -2, "Color");
+    lua_setfield(L, -2, "Brush");
+
+    lua_newtable(L);
+    lua_pushstring(L, "Sans"); lua_setfield(L, -2, "Name");
+    lua_pushinteger(L, 10); lua_setfield(L, -2, "Size");
+    lua_setfield(L, -2, "Font");
+
+    setCanvasMethod(L, "clear", l_canvas_noop);
+    setCanvasMethod(L, "Clear", l_canvas_noop);
+    setCanvasMethod(L, "line", l_canvas_noop);
+    setCanvasMethod(L, "Line", l_canvas_noop);
+    setCanvasMethod(L, "rectangle", l_canvas_noop);
+    setCanvasMethod(L, "Rectangle", l_canvas_noop);
+    setCanvasMethod(L, "fillRect", l_canvas_noop);
+    setCanvasMethod(L, "FillRect", l_canvas_noop);
+    setCanvasMethod(L, "textOut", l_canvas_noop);
+    setCanvasMethod(L, "TextOut", l_canvas_noop);
+    setCanvasMethod(L, "setPixel", l_canvas_noop);
+    setCanvasMethod(L, "SetPixel", l_canvas_noop);
+    setCanvasFunction(L, "getTextWidth", l_canvas_getTextWidth);
+    setCanvasFunction(L, "GetTextWidth", l_canvas_getTextWidth);
+    setCanvasFunction(L, "getTextHeight", l_canvas_getTextHeight);
+    setCanvasFunction(L, "GetTextHeight", l_canvas_getTextHeight);
+    setCanvasFunction(L, "getPixel", l_canvas_getPixel);
+    setCanvasFunction(L, "GetPixel", l_canvas_getPixel);
+
+    return 1;
+}
+
 static int l_sleep(lua_State* L) {
     int ms = (int)luaL_checkinteger(L, 1);
     usleep(ms * 1000);
@@ -1028,6 +1151,20 @@ static void registerConstants(lua_State* L) {
     lua_pushinteger(L, 1); lua_setglobal(L, "bptWrite");
     lua_pushinteger(L, 3); lua_setglobal(L, "bptAccess");
 
+    // Message dialog types and modal results
+    lua_pushinteger(L, 0); lua_setglobal(L, "mtWarning");
+    lua_pushinteger(L, 1); lua_setglobal(L, "mtError");
+    lua_pushinteger(L, 2); lua_setglobal(L, "mtInformation");
+    lua_pushinteger(L, 3); lua_setglobal(L, "mtConfirmation");
+    lua_pushinteger(L, 1); lua_setglobal(L, "mbOK");
+    lua_pushinteger(L, 2); lua_setglobal(L, "mbCancel");
+    lua_pushinteger(L, 6); lua_setglobal(L, "mbYes");
+    lua_pushinteger(L, 7); lua_setglobal(L, "mbNo");
+    lua_pushinteger(L, 1); lua_setglobal(L, "mrOK");
+    lua_pushinteger(L, 2); lua_setglobal(L, "mrCancel");
+    lua_pushinteger(L, 6); lua_setglobal(L, "mrYes");
+    lua_pushinteger(L, 7); lua_setglobal(L, "mrNo");
+
     // Virtual key codes (common ones)
     lua_pushinteger(L, 0x70); lua_setglobal(L, "VK_F1");
     lua_pushinteger(L, 0x71); lua_setglobal(L, "VK_F2");
@@ -1103,6 +1240,8 @@ void registerExtendedBindings(lua_State* L) {
 
     // Utility
     lua_register(L, "showMessage", l_showMessage);
+    lua_register(L, "messageDialog", l_messageDialog);
+    lua_register(L, "getScreenCanvas", l_getScreenCanvas);
     lua_register(L, "sleep", l_sleep);
     lua_register(L, "getCheatEngineDir", l_getCheatEngineDir);
 

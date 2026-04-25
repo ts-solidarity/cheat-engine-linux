@@ -753,6 +753,28 @@ assert(ok == true and msg == nil)
     printf("  autoAssembleCheck: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_utility_bindings() {
+    printf("\n── Test: Lua utility bindings ──\n");
+
+    LuaEngine lua;
+    auto err = lua.execute(
+        "showMessage('utility smoke test')\n"
+        "assert(messageDialog('utility dialog', mtInformation, mbOK) == mrOK)\n"
+        "local canvas = getScreenCanvas()\n"
+        "assert(type(canvas) == 'table')\n"
+        "assert(canvas.Width > 0 and canvas.Height > 0)\n"
+        "assert(canvas.Pen.Color == 0xffffff)\n"
+        "assert(canvas.Brush.Color == 0x000000)\n"
+        "assert(canvas:TextOut(10, 20, 'hello'))\n"
+        "assert(canvas:Line(0, 0, 10, 10))\n"
+        "assert(canvas:getTextWidth('abcd') == 32)\n"
+        "assert(canvas:getTextHeight('abcd') == 16)\n"
+        "assert(canvas:getPixel(1, 1) == 0)\n"
+        "assert(#canvas.commands == 2)\n");
+
+    printf("  showMessage/messageDialog/getScreenCanvas: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_lua_process_bindings(pid_t pid) {
     printf("\n── Test: Lua process bindings ──\n");
 
@@ -1516,6 +1538,7 @@ int main(int argc, char* argv[]) {
     test_lua_file_aliases();
     test_lua_local_memory();
     test_lua_autoassemble_check();
+    test_lua_utility_bindings();
     test_lua_process_bindings(targetPid);
     test_lua_memscan();
     test_binary_scan_bitmask();
