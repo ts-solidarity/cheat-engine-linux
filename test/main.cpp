@@ -172,6 +172,8 @@ static void test_code_analysis_references() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(proc, module);
     auto functions = analyzer.findReferencedFunctions(proc, module);
+    auto functionSummary = analyzer.enumerateFunctions(proc, module);
+    auto callGraph = analyzer.buildCallGraph(proc, module);
     auto jumps = analyzer.findJumps(proc, module);
     auto ripRelative = analyzer.findRipRelativeInstructions(proc, module);
     auto assembly = analyzer.findAssemblyPattern(proc, module, "ret");
@@ -181,6 +183,13 @@ static void test_code_analysis_references() {
         strings[0].target == stringBase && strings[0].text == "hello ce";
     bool functionOk = functions.size() == 1 && functions[0].address == codeBase + 7 &&
         functions[0].target == callTarget;
+    bool functionSummaryOk = functionSummary.size() == 1 &&
+        functionSummary[0].address == callTarget &&
+        functionSummary[0].references == 1;
+    bool callGraphOk = callGraph.size() == 1 &&
+        callGraph[0].caller == codeBase &&
+        callGraph[0].callee == callTarget &&
+        callGraph[0].callSite == codeBase + 7;
     bool jumpsOk = jumps.size() == 1 && jumps[0].address == codeBase + 12 &&
         jumps[0].target == codeBase + 15;
     bool ripOk = ripRelative.size() == 1 && ripRelative[0].address == codeBase &&
@@ -190,6 +199,8 @@ static void test_code_analysis_references() {
 
     printf("  Referenced strings: %s\n", stringOk ? "OK" : "FAILED");
     printf("  Referenced functions: %s\n", functionOk ? "OK" : "FAILED");
+    printf("  Function enumeration: %s\n", functionSummaryOk ? "OK" : "FAILED");
+    printf("  Call graph: %s\n", callGraphOk ? "OK" : "FAILED");
     printf("  Jump detection: %s\n", jumpsOk ? "OK" : "FAILED");
     printf("  RIP-relative instructions: %s\n", ripOk ? "OK" : "FAILED");
     printf("  Assembly pattern scan: %s\n", assemblyOk ? "OK" : "FAILED");

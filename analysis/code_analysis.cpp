@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cctype>
+#include <map>
 #include <optional>
 
 namespace ce {
@@ -157,6 +158,41 @@ std::vector<CodeRef> CodeAnalyzer::findReferencedFunctions(ProcessHandle& proc, 
             functions.push_back(ref);
     }
     return functions;
+}
+
+std::vector<FunctionInfo> CodeAnalyzer::enumerateFunctions(ProcessHandle& proc, const ModuleInfo& module) {
+    std::map<uintptr_t, size_t> references;
+    for (const auto& ref : findReferencedFunctions(proc, module))
+        ++references[ref.target];
+
+    std::vector<FunctionInfo> functions;
+    functions.reserve(references.size());
+    for (const auto& [address, count] : references)
+        functions.push_back({address, count});
+    return functions;
+}
+
+std::vector<CallGraphEdge> CodeAnalyzer::buildCallGraph(ProcessHandle& proc, const ModuleInfo& module) {
+    auto refs = findReferencedFunctions(proc, module);
+    auto functions = enumerateFunctions(proc, module);
+
+    std::vector<uintptr_t> starts;
+    starts.push_back(module.base);
+    for (const auto& fn : functions) {
+        if (fn.address >= module.base && fn.address < module.base + module.size)
+            starts.push_back(fn.address);
+    }
+    std::sort(starts.begin(), starts.end());
+    starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
+
+    std::vector<CallGraphEdge> graph;
+    graph.reserve(refs.size());
+    for (const auto& ref : refs) {
+        auto it = std::upper_bound(starts.begin(), starts.end(), ref.address);
+        uintptr_t caller = it == starts.begin() ? module.base : *std::prev(it);
+        graph.push_back({caller, ref.target, ref.address});
+    }
+    return graph;
 }
 
 std::vector<CodeRef> CodeAnalyzer::findJumps(ProcessHandle& proc, const ModuleInfo& module) {

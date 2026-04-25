@@ -36,6 +36,8 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     auto* tabs = new QTabWidget;
     stringsTable_ = new QTableWidget;
     functionsTable_ = new QTableWidget;
+    functionSummaryTable_ = new QTableWidget;
+    callGraphTable_ = new QTableWidget;
     jumpsTable_ = new QTableWidget;
     ripRelativeTable_ = new QTableWidget;
     assemblyTable_ = new QTableWidget;
@@ -54,6 +56,29 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
             if (ok) emit navigateTo(addr);
         });
     }
+    functionSummaryTable_->setColumnCount(2);
+    functionSummaryTable_->setHorizontalHeaderLabels({"Function", "References"});
+    functionSummaryTable_->horizontalHeader()->setStretchLastSection(true);
+    functionSummaryTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    functionSummaryTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    functionSummaryTable_->verticalHeader()->setVisible(false);
+    connect(functionSummaryTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        bool ok = false;
+        auto addr = functionSummaryTable_->item(row, 0)->text().toULongLong(&ok, 16);
+        if (ok) emit navigateTo(addr);
+    });
+    callGraphTable_->setColumnCount(3);
+    callGraphTable_->setHorizontalHeaderLabels({"Caller", "Callee", "Call Site"});
+    callGraphTable_->horizontalHeader()->setStretchLastSection(true);
+    callGraphTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    callGraphTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    callGraphTable_->verticalHeader()->setVisible(false);
+    connect(callGraphTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int column) {
+        bool ok = false;
+        int sourceColumn = column == 2 ? 2 : 1;
+        auto addr = callGraphTable_->item(row, sourceColumn)->text().toULongLong(&ok, 16);
+        if (ok) emit navigateTo(addr);
+    });
     cavesTable_->setColumnCount(2);
     cavesTable_->setHorizontalHeaderLabels({"Address", "Size"});
     cavesTable_->horizontalHeader()->setStretchLastSection(true);
@@ -67,6 +92,8 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     });
     tabs->addTab(stringsTable_, "Referenced Strings");
     tabs->addTab(functionsTable_, "Referenced Functions");
+    tabs->addTab(functionSummaryTable_, "Functions");
+    tabs->addTab(callGraphTable_, "Call Graph");
     tabs->addTab(jumpsTable_, "Jumps");
     tabs->addTab(ripRelativeTable_, "RIP-relative");
     tabs->addTab(assemblyTable_, "Assembly Scan");
@@ -105,6 +132,8 @@ void CodeReferencesWindow::analyzeSelectedModule() {
     CodeAnalyzer analyzer;
     auto strings = analyzer.findReferencedStrings(*proc_, module);
     auto functions = analyzer.findReferencedFunctions(*proc_, module);
+    auto functionSummary = analyzer.enumerateFunctions(*proc_, module);
+    auto callGraph = analyzer.buildCallGraph(*proc_, module);
     auto jumps = analyzer.findJumps(*proc_, module);
     auto ripRelative = analyzer.findRipRelativeInstructions(*proc_, module);
     auto assembly = assemblyPatternEdit_->text().trimmed().isEmpty()
@@ -114,14 +143,17 @@ void CodeReferencesWindow::analyzeSelectedModule() {
 
     fillTable(stringsTable_, strings);
     fillTable(functionsTable_, functions);
+    fillFunctionsTable(functionSummary);
+    fillCallGraphTable(callGraph);
     fillTable(jumpsTable_, jumps);
     fillTable(ripRelativeTable_, ripRelative);
     fillTable(assemblyTable_, assembly);
     fillCavesTable(caves);
-    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 jumps, %5 RIP-relative, %6 assembly, %7 caves")
+    statusLabel_->setText(QString("%1: %2 strings, %3 calls, %4 functions, %5 jumps, %6 RIP-relative, %7 assembly, %8 caves")
         .arg(QString::fromStdString(module.name))
         .arg(strings.size())
         .arg(functions.size())
+        .arg(functionSummary.size())
         .arg(jumps.size())
         .arg(ripRelative.size())
         .arg(assembly.size())
@@ -135,6 +167,25 @@ void CodeReferencesWindow::fillTable(QTableWidget* table, const std::vector<Code
         table->setItem(row, 0, new QTableWidgetItem(QString("%1").arg(ref.address, 16, 16, QChar('0'))));
         table->setItem(row, 1, new QTableWidgetItem(QString("%1").arg(ref.target, 16, 16, QChar('0'))));
         table->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(ref.text)));
+    }
+}
+
+void CodeReferencesWindow::fillFunctionsTable(const std::vector<FunctionInfo>& functions) {
+    functionSummaryTable_->setRowCount((int)functions.size());
+    for (int row = 0; row < (int)functions.size(); ++row) {
+        const auto& fn = functions[row];
+        functionSummaryTable_->setItem(row, 0, new QTableWidgetItem(QString("%1").arg(fn.address, 16, 16, QChar('0'))));
+        functionSummaryTable_->setItem(row, 1, new QTableWidgetItem(QString::number(fn.references)));
+    }
+}
+
+void CodeReferencesWindow::fillCallGraphTable(const std::vector<CallGraphEdge>& graph) {
+    callGraphTable_->setRowCount((int)graph.size());
+    for (int row = 0; row < (int)graph.size(); ++row) {
+        const auto& edge = graph[row];
+        callGraphTable_->setItem(row, 0, new QTableWidgetItem(QString("%1").arg(edge.caller, 16, 16, QChar('0'))));
+        callGraphTable_->setItem(row, 1, new QTableWidgetItem(QString("%1").arg(edge.callee, 16, 16, QChar('0'))));
+        callGraphTable_->setItem(row, 2, new QTableWidgetItem(QString("%1").arg(edge.callSite, 16, 16, QChar('0'))));
     }
 }
 

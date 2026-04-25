@@ -22,6 +22,8 @@ signals:
 private:
     void analyzeSelectedModule();
     void fillTable(QTableWidget* table, const std::vector<ce::CodeRef>& refs);
+    void fillFunctionsTable(const std::vector<ce::FunctionInfo>& functions);
+    void fillCallGraphTable(const std::vector<ce::CallGraphEdge>& graph);
     void fillCavesTable(const std::vector<ce::CodeCave>& caves);
     ce::ModuleInfo selectedModule() const;
 
@@ -33,6 +35,8 @@ private:
     QLineEdit* assemblyPatternEdit_;
     QTableWidget* stringsTable_;
     QTableWidget* functionsTable_;
+    QTableWidget* functionSummaryTable_;
+    QTableWidget* callGraphTable_;
     QTableWidget* jumpsTable_;
     QTableWidget* ripRelativeTable_;
     QTableWidget* assemblyTable_;

@@ -24,6 +24,17 @@ struct CodeCave {
     size_t size;
 };
 
+struct FunctionInfo {
+    uintptr_t address;
+    size_t references;
+};
+
+struct CallGraphEdge {
+    uintptr_t caller;
+    uintptr_t callee;
+    uintptr_t callSite;
+};
+
 class CodeAnalyzer {
 public:
     /// Dissect a module — find all calls, jumps, string references.
@@ -34,6 +45,12 @@ public:
 
     /// Find direct call targets inside a module.
     std::vector<CodeRef> findReferencedFunctions(ProcessHandle& proc, const ModuleInfo& module);
+
+    /// Enumerate functions by unique direct call targets.
+    std::vector<FunctionInfo> enumerateFunctions(ProcessHandle& proc, const ModuleInfo& module);
+
+    /// Build direct call graph edges from module call sites.
+    std::vector<CallGraphEdge> buildCallGraph(ProcessHandle& proc, const ModuleInfo& module);
 
     /// Find direct conditional and unconditional jump targets inside a module.
     std::vector<CodeRef> findJumps(ProcessHandle& proc, const ModuleInfo& module);
