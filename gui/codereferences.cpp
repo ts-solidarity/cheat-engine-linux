@@ -23,10 +23,13 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     minCaveSizeSpin_ = new QSpinBox;
     minCaveSizeSpin_->setRange(4, 4096);
     minCaveSizeSpin_->setValue(16);
+    assemblyPatternEdit_ = new QLineEdit;
+    assemblyPatternEdit_->setPlaceholderText("Assembly pattern");
     auto* analyzeBtn = new QPushButton("Analyze");
     top->addWidget(moduleCombo_, 1);
     top->addWidget(new QLabel("Min cave bytes:"));
     top->addWidget(minCaveSizeSpin_);
+    top->addWidget(assemblyPatternEdit_, 1);
     top->addWidget(analyzeBtn);
     layout->addLayout(top);
 
@@ -34,8 +37,9 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     stringsTable_ = new QTableWidget;
     functionsTable_ = new QTableWidget;
     ripRelativeTable_ = new QTableWidget;
+    assemblyTable_ = new QTableWidget;
     cavesTable_ = new QTableWidget;
-    for (auto* table : {stringsTable_, functionsTable_, ripRelativeTable_}) {
+    for (auto* table : {stringsTable_, functionsTable_, ripRelativeTable_, assemblyTable_}) {
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({"Instruction", "Target", "Text"});
         table->horizontalHeader()->setStretchLastSection(true);
@@ -63,6 +67,7 @@ CodeReferencesWindow::CodeReferencesWindow(ProcessHandle* proc, QWidget* parent)
     tabs->addTab(stringsTable_, "Referenced Strings");
     tabs->addTab(functionsTable_, "Referenced Functions");
     tabs->addTab(ripRelativeTable_, "RIP-relative");
+    tabs->addTab(assemblyTable_, "Assembly Scan");
     tabs->addTab(cavesTable_, "Code Caves");
     layout->addWidget(tabs, 1);
 
@@ -99,17 +104,22 @@ void CodeReferencesWindow::analyzeSelectedModule() {
     auto strings = analyzer.findReferencedStrings(*proc_, module);
     auto functions = analyzer.findReferencedFunctions(*proc_, module);
     auto ripRelative = analyzer.findRipRelativeInstructions(*proc_, module);
+    auto assembly = assemblyPatternEdit_->text().trimmed().isEmpty()
+        ? std::vector<CodeRef>{}
+        : analyzer.findAssemblyPattern(*proc_, module, assemblyPatternEdit_->text().toStdString());
     auto caves = analyzer.findCodeCaves(*proc_, module, minCaveSizeSpin_->value());
 
     fillTable(stringsTable_, strings);
     fillTable(functionsTable_, functions);
     fillTable(ripRelativeTable_, ripRelative);
+    fillTable(assemblyTable_, assembly);
     fillCavesTable(caves);
-    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 RIP-relative, %5 caves")
+    statusLabel_->setText(QString("%1: %2 strings, %3 functions, %4 RIP-relative, %5 assembly, %6 caves")
         .arg(QString::fromStdString(module.name))
         .arg(strings.size())
         .arg(functions.size())
         .arg(ripRelative.size())
+        .arg(assembly.size())
         .arg(caves.size()));
 }
 

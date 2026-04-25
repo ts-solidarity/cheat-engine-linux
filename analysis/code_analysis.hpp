@@ -1,6 +1,7 @@
 #pragma once
 /// Code analysis — dissect modules for functions, strings, code caves.
 
+#include "arch/assembler.hpp"
 #include "platform/process_api.hpp"
 #include "arch/disassembler.hpp"
 #include "symbols/elf_symbols.hpp"
@@ -9,7 +10,7 @@
 
 namespace ce {
 
-enum class RefType { Call, Jump, String, Function, RipRelative };
+enum class RefType { Call, Jump, String, Function, RipRelative, AssemblyPattern };
 
 struct CodeRef {
     uintptr_t address;      // Address of the instruction
@@ -37,11 +38,16 @@ public:
     /// Find RIP-relative memory references inside executable module regions.
     std::vector<CodeRef> findRipRelativeInstructions(ProcessHandle& proc, const ModuleInfo& module);
 
+    /// Assemble an instruction pattern and find exact byte matches in executable module regions.
+    std::vector<CodeRef> findAssemblyPattern(ProcessHandle& proc, const ModuleInfo& module,
+                                             const std::string& assembly);
+
     /// Find code caves (runs of 0x00 or 0xCC bytes).
     std::vector<CodeCave> findCodeCaves(ProcessHandle& proc, const ModuleInfo& module, size_t minSize = 16);
 
 private:
     Disassembler disasm_{Arch::X86_64};
+    Assembler assembler_{AsmArch::X86_64};
 };
 
 } // namespace ce

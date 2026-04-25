@@ -172,6 +172,7 @@ static void test_code_analysis_references() {
     auto strings = analyzer.findReferencedStrings(proc, module);
     auto functions = analyzer.findReferencedFunctions(proc, module);
     auto ripRelative = analyzer.findRipRelativeInstructions(proc, module);
+    auto assembly = analyzer.findAssemblyPattern(proc, module, "ret");
     auto caves = analyzer.findCodeCaves(proc, module, 16);
 
     bool stringOk = strings.size() == 1 && strings[0].address == codeBase &&
@@ -180,11 +181,13 @@ static void test_code_analysis_references() {
         functions[0].target == callTarget;
     bool ripOk = ripRelative.size() == 1 && ripRelative[0].address == codeBase &&
         ripRelative[0].target == stringBase;
+    bool assemblyOk = assembly.size() == 1 && assembly[0].address == codeBase + 12;
     bool cavesOk = caves.size() == 1 && caves[0].address == codeBase + 13 && caves[0].size == 20;
 
     printf("  Referenced strings: %s\n", stringOk ? "OK" : "FAILED");
     printf("  Referenced functions: %s\n", functionOk ? "OK" : "FAILED");
     printf("  RIP-relative instructions: %s\n", ripOk ? "OK" : "FAILED");
+    printf("  Assembly pattern scan: %s\n", assemblyOk ? "OK" : "FAILED");
     printf("  Code caves: %s\n", cavesOk ? "OK" : "FAILED");
 }
 

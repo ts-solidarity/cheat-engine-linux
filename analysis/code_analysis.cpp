@@ -169,6 +169,37 @@ std::vector<CodeRef> CodeAnalyzer::findRipRelativeInstructions(ProcessHandle& pr
     return ripRefs;
 }
 
+std::vector<CodeRef> CodeAnalyzer::findAssemblyPattern(ProcessHandle& proc, const ModuleInfo& module,
+                                                       const std::string& assembly) {
+    auto assembled = assembler_.assemble(assembly, module.base);
+    if (!assembled || assembled->empty()) return {};
+
+    std::vector<CodeRef> matches;
+    auto regions = proc.queryRegions();
+    for (const auto& r : regions) {
+        if (r.base < module.base || r.base >= module.base + module.size) continue;
+        if (!(r.protection & MemProt::Exec)) continue;
+
+        std::vector<uint8_t> buf(r.size);
+        auto rr = proc.read(r.base, buf.data(), r.size);
+        if (!rr || *rr < assembled->size()) continue;
+
+        for (size_t offset = 0; offset + assembled->size() <= *rr; ++offset) {
+            if (std::memcmp(buf.data() + offset, assembled->data(), assembled->size()) != 0)
+                continue;
+
+            CodeRef ref;
+            ref.address = r.base + offset;
+            ref.target = 0;
+            ref.type = RefType::AssemblyPattern;
+            ref.text = assembly;
+            matches.push_back(std::move(ref));
+        }
+    }
+
+    return matches;
+}
+
 std::vector<CodeCave> CodeAnalyzer::findCodeCaves(ProcessHandle& proc, const ModuleInfo& module, size_t minSize) {
     std::vector<CodeCave> caves;
     auto regions = proc.queryRegions();

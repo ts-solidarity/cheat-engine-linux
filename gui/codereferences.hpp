@@ -4,6 +4,7 @@
 #include "platform/process_api.hpp"
 #include <QComboBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -29,9 +30,11 @@ private:
     QComboBox* moduleCombo_;
     QLabel* statusLabel_;
     QSpinBox* minCaveSizeSpin_;
+    QLineEdit* assemblyPatternEdit_;
     QTableWidget* stringsTable_;
     QTableWidget* functionsTable_;
     QTableWidget* ripRelativeTable_;
+    QTableWidget* assemblyTable_;
     QTableWidget* cavesTable_;
 };
 
