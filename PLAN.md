@@ -167,8 +167,8 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [ ] Auto-detect fields by comparing changed/unchanged regions
 - [ ] Pointer chain following in structures
 - [ ] Custom display methods per field
-- [ ] Structure templates (save/load structure definitions)
-- [ ] Generate C/C++ struct definition from dissected layout
+- [x] Structure templates (save/load structure definitions)
+- [x] Generate C/C++ struct definition from dissected layout
 
 **2.4 Additional GUI Windows**
 - [x] Breakpoint list manager
@@ -189,6 +189,8 @@ Note: referenced strings, referenced functions, function summaries, call graph e
 Note: heap enumeration is implemented as a Linux Heap Regions window over `/proc/<pid>/maps`, showing `[heap]` and writable anonymous private mappings.
 
 Note: Lua utility bindings now include `messageDialog` modal-result constants and a headless `getScreenCanvas` canvas object with basic drawing/text methods for script compatibility.
+
+Note: structure definitions now have reusable template save/load helpers and C/C++ struct export with padding, backed by regression tests.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

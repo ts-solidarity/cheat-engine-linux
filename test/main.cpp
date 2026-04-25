@@ -3,6 +3,7 @@
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
 #include "analysis/code_analysis.hpp"
+#include "analysis/structure_tools.hpp"
 #include "debug/breakpoint_manager.hpp"
 #include "debug/stack_trace.hpp"
 #include "scripting/lua_engine.hpp"
@@ -259,6 +260,39 @@ static void test_stack_trace_frame_walk() {
         frames[2].framePointer == rbp1;
 
     printf("  frame pointer walk: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_structure_tools() {
+    printf("\n── Test: Structure tools ──\n");
+
+    StructureDefinition structure;
+    structure.name = "Player State";
+    structure.size = 24;
+    structure.fields.push_back({"health", 0, ValueType::Int32, 4});
+    structure.fields.push_back({"mana value", 4, ValueType::Float, 4});
+    structure.fields.push_back({"target", 16, ValueType::Pointer, sizeof(uintptr_t)});
+
+    auto path = std::filesystem::temp_directory_path() /
+        ("cecore-structure-" + std::to_string(getpid()) + ".json");
+    bool saveOk = saveStructureTemplate(structure, path.string());
+    auto loaded = loadStructureTemplate(path.string());
+    std::filesystem::remove(path);
+
+    auto cpp = generateCppStruct(structure);
+    bool loadOk = loaded &&
+        loaded->name == structure.name &&
+        loaded->size == structure.size &&
+        loaded->fields.size() == structure.fields.size() &&
+        loaded->fields[1].name == "mana value" &&
+        loaded->fields[2].type == ValueType::Pointer;
+    bool cppOk = cpp.find("struct Player_State") != std::string::npos &&
+        cpp.find("int32_t health; // 0x0") != std::string::npos &&
+        cpp.find("float mana_value; // 0x4") != std::string::npos &&
+        cpp.find("uint8_t _pad0[0x8];") != std::string::npos &&
+        cpp.find("uintptr_t target; // 0x10") != std::string::npos;
+
+    printf("  template save/load: %s\n", (saveOk && loadOk) ? "OK" : "FAILED");
+    printf("  C++ struct export: %s\n", cppOk ? "OK" : "FAILED");
 }
 
 static void test_autoassembler_unregister_symbol(pid_t pid) {
@@ -1520,6 +1554,7 @@ int main(int argc, char* argv[]) {
     test_cheat_table_json();
     test_code_analysis_references();
     test_stack_trace_frame_walk();
+    test_structure_tools();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_data_directive_widths(targetPid);

@@ -52,6 +52,7 @@ add_library(cecore SHARED
     core/ct_file.cpp
     core/trainer.cpp
     analysis/code_analysis.cpp
+    analysis/structure_tools.cpp
     platform/linux/linux_process.cpp
     platform/linux/ptrace_wrapper.cpp
     platform/linux/injector.cpp
