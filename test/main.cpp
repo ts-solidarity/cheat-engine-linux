@@ -874,6 +874,28 @@ static void test_lua_utility_bindings() {
     printf("  showMessage/messageDialog/getScreenCanvas: %s\n", err.empty() ? "OK" : "FAILED");
 }
 
+static void test_lua_hotkey_bindings() {
+    printf("\n── Test: Lua hotkey bindings ──\n");
+
+    LuaEngine lua;
+    auto err = lua.execute(
+        "local hits = 0\n"
+        "local hk = createHotkey(function() hits = hits + 1 end, VK_F1, VK_F2)\n"
+        "local keys = hk:getKeys()\n"
+        "assert(keys[1] == VK_F1 and keys[2] == VK_F2)\n"
+        "assert(hk:trigger() == true and hits == 1)\n"
+        "setHotkeyAction(hk, function() hits = hits + 10 end)\n"
+        "assert(hk:doHotkey() == true and hits == 11)\n"
+        "hk.Enabled = false\n"
+        "assert(hk:trigger() == false and hits == 11)\n"
+        "hk.Enabled = true\n"
+        "assert(hk:trigger() == true and hits == 21)\n"
+        "hk:destroy()\n"
+        "assert(hk:trigger() == false and hits == 21)\n");
+
+    printf("  createHotkey/setHotkeyAction: %s\n", err.empty() ? "OK" : "FAILED");
+}
+
 static void test_lua_process_bindings(pid_t pid) {
     printf("\n── Test: Lua process bindings ──\n");
 
@@ -1639,6 +1661,7 @@ int main(int argc, char* argv[]) {
     test_lua_local_memory();
     test_lua_autoassemble_check();
     test_lua_utility_bindings();
+    test_lua_hotkey_bindings();
     test_lua_process_bindings(targetPid);
     test_lua_memscan();
     test_binary_scan_bitmask();

@@ -147,7 +147,7 @@ Note: the Stack Trace window now attaches to the selected thread, preserves the 
 - [x] Timer: createTimer, timer.Enabled, timer.Interval, timer.OnTimer
 - [x] File I/O: readFile, writeFile, getCheatEngineDir, getTempDir
 - [ ] Table: getTableEntry, setTableEntry, addressList manipulation
-- [ ] Hotkeys: createHotkey, setHotkeyAction
+- [x] Hotkeys: createHotkey, setHotkeyAction
 - [ ] Threads: createThread (Lua thread), synchronize, queue
 
 **2.2 Code Analysis**
@@ -199,6 +199,8 @@ Note: structure tooling now auto-detects changed/unchanged field runs from snaps
 Note: structure fields now persist optional display methods and can format snapshot values as hex bytes, signed/unsigned integers, floats, or pointers.
 
 Note: structure fields now support nested structure references, persisted through JSON/`.CT` templates and emitted as nested field types in C/C++ struct export.
+
+Note: Lua hotkey bindings now expose `createHotkey`/`setHotkeyAction` objects with key storage, enabled state, callback replacement, explicit trigger methods, and cleanup for headless script compatibility.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 

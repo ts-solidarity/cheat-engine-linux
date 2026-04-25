@@ -1115,6 +1115,140 @@ static int l_fullAccess(lua_State* L) {
     return 0;
 }
 
+// ── Hotkeys ──
+
+struct LuaHotkey {
+    int callbackRef = LUA_NOREF;
+    bool enabled = true;
+    std::vector<int> keys;
+};
+
+static LuaHotkey* checkHotkey(lua_State* L, int index) {
+    return static_cast<LuaHotkey*>(luaL_checkudata(L, index, "CEHotkey"));
+}
+
+static int l_hotkey_gc(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    if (hotkey->callbackRef != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, hotkey->callbackRef);
+        hotkey->callbackRef = LUA_NOREF;
+    }
+    hotkey->~LuaHotkey();
+    return 0;
+}
+
+static int l_hotkey_trigger(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    if (!hotkey->enabled || hotkey->callbackRef == LUA_NOREF) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, hotkey->callbackRef);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char* err = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        lua_pushstring(L, err ? err : "hotkey callback failed");
+        return 2;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_hotkey_destroy(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    hotkey->enabled = false;
+    if (hotkey->callbackRef != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, hotkey->callbackRef);
+        hotkey->callbackRef = LUA_NOREF;
+    }
+    return 0;
+}
+
+static int l_hotkey_getKeys(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    lua_newtable(L);
+    for (size_t i = 0; i < hotkey->keys.size(); ++i) {
+        lua_pushinteger(L, hotkey->keys[i]);
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
+static int l_hotkey_index(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    const char* key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "Enabled") == 0 || std::strcmp(key, "enabled") == 0) {
+        lua_pushboolean(L, hotkey->enabled);
+        return 1;
+    }
+    if (std::strcmp(key, "trigger") == 0 || std::strcmp(key, "doHotkey") == 0) {
+        lua_pushcfunction(L, l_hotkey_trigger);
+        return 1;
+    }
+    if (std::strcmp(key, "destroy") == 0 || std::strcmp(key, "Destroy") == 0) {
+        lua_pushcfunction(L, l_hotkey_destroy);
+        return 1;
+    }
+    if (std::strcmp(key, "getKeys") == 0 || std::strcmp(key, "GetKeys") == 0) {
+        lua_pushcfunction(L, l_hotkey_getKeys);
+        return 1;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int l_hotkey_newindex(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    const char* key = luaL_checkstring(L, 2);
+    if (std::strcmp(key, "Enabled") == 0 || std::strcmp(key, "enabled") == 0)
+        hotkey->enabled = lua_toboolean(L, 3) != 0;
+    return 0;
+}
+
+static void ensureHotkeyMetatable(lua_State* L) {
+    if (luaL_newmetatable(L, "CEHotkey")) {
+        lua_pushcfunction(L, l_hotkey_gc);
+        lua_setfield(L, -2, "__gc");
+        lua_pushcfunction(L, l_hotkey_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, l_hotkey_newindex);
+        lua_setfield(L, -2, "__newindex");
+    }
+    lua_pop(L, 1);
+}
+
+static int l_createHotkey(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    ensureHotkeyMetatable(L);
+
+    auto* hotkey = static_cast<LuaHotkey*>(lua_newuserdata(L, sizeof(LuaHotkey)));
+    new (hotkey) LuaHotkey();
+    lua_pushvalue(L, 1);
+    hotkey->callbackRef = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    int top = lua_gettop(L);
+    for (int i = 2; i < top; ++i) {
+        if (lua_isinteger(L, i))
+            hotkey->keys.push_back(static_cast<int>(lua_tointeger(L, i)));
+    }
+
+    luaL_getmetatable(L, "CEHotkey");
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+static int l_setHotkeyAction(lua_State* L) {
+    auto* hotkey = checkHotkey(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    if (hotkey->callbackRef != LUA_NOREF)
+        luaL_unref(L, LUA_REGISTRYINDEX, hotkey->callbackRef);
+    lua_pushvalue(L, 2);
+    hotkey->callbackRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 // ── Constants registration ──
 
 static void registerConstants(lua_State* L) {
@@ -1281,6 +1415,10 @@ void registerExtendedBindings(lua_State* L) {
 
     // Memory protection
     lua_register(L, "fullAccess", l_fullAccess);
+
+    // Hotkeys
+    lua_register(L, "createHotkey", l_createHotkey);
+    lua_register(L, "setHotkeyAction", l_setHotkeyAction);
 
     // File regions
     lua_register(L, "readRegionFromFile", l_readRegionFromFile);
