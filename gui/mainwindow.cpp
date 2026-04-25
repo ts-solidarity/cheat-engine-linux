@@ -303,6 +303,27 @@ void MainWindow::setupUi() {
     valueTypeCombo_->setCurrentIndex(2); // 4 Bytes default
     rightLayout->addWidget(valueTypeCombo_);
 
+    auto* floatLayout = new QHBoxLayout;
+    floatRoundingCombo_ = new QComboBox;
+    floatRoundingCombo_->addItems({"Exact", "Rounded", "Truncated", "Extreme"});
+    floatToleranceEdit_ = new QLineEdit;
+    floatToleranceEdit_->setPlaceholderText("Tolerance");
+    floatToleranceEdit_->setValidator(new QDoubleValidator(0.0, 1000000.0, 8, floatToleranceEdit_));
+    floatLayout->addWidget(floatRoundingCombo_);
+    floatLayout->addWidget(floatToleranceEdit_);
+    rightLayout->addLayout(floatLayout);
+    auto updateFloatOptions = [this]() {
+        auto vt = mapValueType(valueTypeCombo_->currentIndex());
+        bool isFloat = vt == ValueType::Float || vt == ValueType::Double;
+        floatRoundingCombo_->setEnabled(isFloat);
+        floatToleranceEdit_->setEnabled(isFloat && floatRoundingCombo_->currentIndex() == 3);
+    };
+    connect(valueTypeCombo_, &QComboBox::currentIndexChanged, this,
+        [updateFloatOptions](int) { updateFloatOptions(); });
+    connect(floatRoundingCombo_, &QComboBox::currentIndexChanged, this,
+        [updateFloatOptions](int) { updateFloatOptions(); });
+    updateFloatOptions();
+
     // Buttons
     auto* btnLayout = new QHBoxLayout;
     firstScanBtn_ = new QPushButton("First Scan");
@@ -527,6 +548,18 @@ static ValueType mapValueType(int index) {
     }
 }
 
+static void applyFloatOptions(ScanConfig& config, QComboBox* roundingCombo, QLineEdit* toleranceEdit) {
+    if (config.valueType != ValueType::Float &&
+        config.valueType != ValueType::Double) {
+        return;
+    }
+    config.roundingType = roundingCombo->currentIndex();
+    bool ok = false;
+    double tolerance = toleranceEdit->text().toDouble(&ok);
+    if (ok && tolerance > 0.0)
+        config.floatTolerance = tolerance;
+}
+
 void MainWindow::onFirstScan() {
     if (!process_) return;
 
@@ -558,6 +591,7 @@ void MainWindow::onFirstScan() {
     } else {
         config.intValue = text.toLongLong();
     }
+    applyFloatOptions(config, floatRoundingCombo_, floatToleranceEdit_);
 
     firstScanBtn_->setEnabled(false);
     auto result = std::make_unique<ScanResult>(scanner_.firstScan(*process_, config));
@@ -597,6 +631,7 @@ void MainWindow::onNextScan() {
     } else {
         config.intValue = text.toLongLong();
     }
+    applyFloatOptions(config, floatRoundingCombo_, floatToleranceEdit_);
 
     if (percentCheck_->isChecked()) {
         config.percentageScan = true;

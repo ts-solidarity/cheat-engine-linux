@@ -44,14 +44,6 @@ template<typename T> bool cmpIncreased(T c, T v, T)      { return c > v; }
 template<typename T> bool cmpDecreased(T c, T v, T)      { return c < v; }
 template<typename T> bool cmpUnknown(T, T, T)             { return true; }
 
-// Float-specific: rounded comparison (match within tolerance)
-inline bool cmpFloatRounded(float c, float v, float tol)  { return std::abs(c - v) <= tol; }
-inline bool cmpDoubleRounded(double c, double v, double tol) { return std::abs(c - v) <= tol; }
-
-// Float-specific: truncated comparison (integer part matches)
-inline bool cmpFloatTruncated(float c, float v, float)    { return (int)c == (int)v; }
-inline bool cmpDoubleTruncated(double c, double v, double) { return (int64_t)c == (int64_t)v; }
-
 template<typename T>
 CompareFn<T> getCompare(ScanCompare cmp) {
     switch (cmp) {
@@ -66,6 +58,33 @@ CompareFn<T> getCompare(ScanCompare cmp) {
         case ScanCompare::Unknown:   return cmpUnknown<T>;
         default:                     return cmpExact<T>;
     }
+}
+
+template<typename T>
+bool compareFloatingExact(const ScanConfig& config, T current, T scanVal) {
+    if (!std::isfinite(static_cast<double>(current))) return false;
+
+    switch (config.roundingType) {
+        case 1:
+            return std::llround(current) == std::llround(scanVal);
+        case 2:
+            return std::trunc(current) == std::trunc(scanVal);
+        case 3: {
+            double tolerance = config.floatTolerance > 0.0
+                ? config.floatTolerance
+                : std::max(1e-6, std::abs(static_cast<double>(scanVal)) * 1e-6);
+            return std::abs(static_cast<double>(current) - static_cast<double>(scanVal)) <= tolerance;
+        }
+        default:
+            return current == scanVal;
+    }
+}
+
+template<typename T>
+bool compareFloating(const ScanConfig& config, T current, T scanVal, T scanVal2) {
+    if (config.compareType == ScanCompare::Exact)
+        return compareFloatingExact(config, current, scanVal);
+    return getCompare<T>(config.compareType)(current, scanVal, scanVal2);
 }
 
 bool supportsPercentageCompare(ScanCompare cmp) {
@@ -101,6 +120,23 @@ bool comparePercentage(const ScanConfig& config, T current, T old) {
         }
         default:
             return false;
+    }
+}
+
+template<typename T>
+void scanBufferFloating(const uint8_t* buf, size_t bufSize, uintptr_t baseAddr,
+                        size_t alignment, const ScanConfig& config, ScanResult& result)
+{
+    if (bufSize < sizeof(T)) return;
+    size_t limit = bufSize - sizeof(T) + 1;
+
+    T scanVal = static_cast<T>(config.floatValue);
+    T scanVal2 = static_cast<T>(config.floatValue2);
+    for (size_t offset = 0; offset < limit; offset += alignment) {
+        T current;
+        std::memcpy(&current, buf + offset, sizeof(T));
+        if (compareFloating(config, current, scanVal, scanVal2))
+            result.addResult(baseAddr + offset, &current, sizeof(T));
     }
 }
 
@@ -310,13 +346,7 @@ bool compareNextNumeric(const ScanConfig& config, const uint8_t* currentVal, con
     if constexpr (std::is_floating_point_v<T>) {
         T v1 = static_cast<T>(config.floatValue);
         T v2 = static_cast<T>(config.floatValue2);
-        if (config.compareType == ScanCompare::Exact) {
-            if (config.roundingType == 1 || config.floatTolerance > 0.0)
-                return std::abs(cur - v1) <= static_cast<T>(config.floatTolerance);
-            if (config.roundingType == 2)
-                return static_cast<int64_t>(cur) == static_cast<int64_t>(v1);
-        }
-        return cmp(cur, v1, v2);
+        return compareFloating(config, cur, v1, v2);
     } else {
         return cmp(cur, static_cast<T>(config.intValue), static_cast<T>(config.intValue2));
     }
@@ -563,11 +593,9 @@ ScanResult MemoryScanner::firstScan(ProcessHandle& proc, const ScanConfig& confi
                 scanBuffer<int64_t>(buf, bytesRead, base, config.alignment,
                     config.intValue, config.intValue2, getCompare<int64_t>(config.compareType), res); break;
             case ValueType::Float:
-                scanBuffer<float>(buf, bytesRead, base, config.alignment,
-                    (float)config.floatValue, (float)config.floatValue2, getCompare<float>(config.compareType), res); break;
+                scanBufferFloating<float>(buf, bytesRead, base, config.alignment, config, res); break;
             case ValueType::Double:
-                scanBuffer<double>(buf, bytesRead, base, config.alignment,
-                    config.floatValue, config.floatValue2, getCompare<double>(config.compareType), res); break;
+                scanBufferFloating<double>(buf, bytesRead, base, config.alignment, config, res); break;
             case ValueType::String:
                 scanBufferString(buf, bytesRead, base, config.stringValue, res); break;
             case ValueType::UnicodeString:

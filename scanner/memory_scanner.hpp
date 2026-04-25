@@ -22,8 +22,8 @@ struct ScanConfig {
     bool        scanPrivate = true;
     bool        scanImage   = true;
     bool        scanMapped  = true;
-    int         roundingType       = 0;   // 0=exact, 1=rounded, 2=truncated
-    double      floatTolerance     = 0.0; // For rounded comparison
+    int         roundingType       = 0;   // 0=exact, 1=rounded, 2=truncated, 3=extreme
+    double      floatTolerance     = 0.0; // Override tolerance for extreme comparisons
     bool        percentageScan     = false;
     double      percentageValue    = 0.0;
     double      percentageValue2   = 0.0; // For percentage "between" comparisons

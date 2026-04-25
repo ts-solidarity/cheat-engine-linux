@@ -48,6 +48,8 @@ static void usage() {
         "  --previous <dir>  Previous scan result directory (for next scan)\n"
         "  --percent <pct>   Percentage threshold for next-scan compare\n"
         "  --percent2 <pct>  Upper bound for percentage 'between'\n"
+        "  --rounding <mode> Float exact mode: exact, rounded, truncated, extreme\n"
+        "  --tolerance <n>   Override tolerance for extreme float matching\n"
         "  --align <n>       Scan alignment (default: 4)\n"
         "  --writable        Only scan writable memory\n"
         "\n"
@@ -84,6 +86,14 @@ static ScanCompare parseCompare(const char* s) {
     if (!strcmp(s, "unknown"))   return ScanCompare::Unknown;
     fprintf(stderr, "Unknown compare: %s\n", s);
     exit(1);
+}
+
+static int parseRounding(const char* s) {
+    if (!strcmp(s, "exact")) return 0;
+    if (!strcmp(s, "rounded")) return 1;
+    if (!strcmp(s, "truncated")) return 2;
+    if (!strcmp(s, "extreme")) return 3;
+    return 0;
 }
 
 static size_t typeSize(ValueType vt) {
@@ -225,6 +235,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
     const char* value2Str = nullptr;
     const char* percentStr = nullptr;
     const char* percent2Str = nullptr;
+    const char* roundingStr = nullptr;
+    const char* toleranceStr = nullptr;
 
     static struct option long_opts[] = {
         {"type",     required_argument, nullptr, 't'},
@@ -234,6 +246,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         {"previous", required_argument, nullptr, 'p'},
         {"percent",  required_argument, nullptr, 'P'},
         {"percent2", required_argument, nullptr, 'q'},
+        {"rounding", required_argument, nullptr, 'r'},
+        {"tolerance", required_argument, nullptr, 'T'},
         {"align",    required_argument, nullptr, 'a'},
         {"writable", no_argument,       nullptr, 'w'},
         {nullptr, 0, nullptr, 0}
@@ -241,7 +255,7 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
 
     optind = 1; // reset getopt
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:v:2:c:p:P:q:a:w", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "t:v:2:c:p:P:q:r:T:a:w", long_opts, nullptr)) != -1) {
         switch (opt) {
             case 't': config.valueType = parseType(optarg); break;
             case 'v': valueStr = optarg; break;
@@ -250,6 +264,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
             case 'p': previousDir = optarg; break;
             case 'P': percentStr = optarg; break;
             case 'q': percent2Str = optarg; break;
+            case 'r': roundingStr = optarg; break;
+            case 'T': toleranceStr = optarg; break;
             case 'a': config.alignment = atoi(optarg); break;
             case 'w': config.scanWritableOnly = true; break;
         }
@@ -286,6 +302,8 @@ static int cmd_scan(pid_t pid, int argc, char** argv) {
         config.percentageValue = atof(percentStr);
         config.percentageValue2 = percent2Str ? atof(percent2Str) : config.percentageValue;
     }
+    if (roundingStr) config.roundingType = parseRounding(roundingStr);
+    if (toleranceStr) config.floatTolerance = atof(toleranceStr);
 
     LinuxProcessHandle proc(pid);
     MemoryScanner scanner;

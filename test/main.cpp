@@ -849,6 +849,71 @@ static void test_percentage_scan() {
     printf("  increased/between by percent: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_float_rounding_scan() {
+    printf("\n── Test: Float rounding scan ──\n");
+
+    const size_t pageSize = 4096;
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) {
+        printf("  rounded/truncated/extreme: FAILED\n");
+        return;
+    }
+
+    std::memset(page, 0x7f, pageSize);
+    auto base = reinterpret_cast<uintptr_t>(page);
+    auto* bytes = reinterpret_cast<uint8_t*>(page);
+    float roundedA = 42.4f;
+    float roundedB = 42.01f;
+    float notRounded = 42.6f;
+    std::memcpy(bytes + 16, &roundedA, sizeof(roundedA));
+    std::memcpy(bytes + 32, &notRounded, sizeof(notRounded));
+    std::memcpy(bytes + 48, &roundedB, sizeof(roundedB));
+
+    LinuxProcessHandle proc(getpid());
+    MemoryScanner scanner;
+
+    ScanConfig config;
+    config.valueType = ValueType::Float;
+    config.compareType = ScanCompare::Exact;
+    config.floatValue = 42.0;
+    config.alignment = 4;
+    config.startAddress = base;
+    config.stopAddress = base + pageSize;
+
+    config.roundingType = 1;
+    auto roundedResult = scanner.firstScan(proc, config);
+
+    config.roundingType = 2;
+    auto truncatedResult = scanner.firstScan(proc, config);
+
+    config.roundingType = 3;
+    config.floatTolerance = 0.02;
+    auto extremeResult = scanner.firstScan(proc, config);
+
+    auto hasAddress = [](const ScanResult& result, uintptr_t address) {
+        for (size_t i = 0; i < result.count(); ++i)
+            if (result.address(i) == address)
+                return true;
+        return false;
+    };
+
+    bool roundedOk = roundedResult.count() == 2 &&
+        hasAddress(roundedResult, base + 16) &&
+        hasAddress(roundedResult, base + 48);
+    bool truncatedOk = truncatedResult.count() == 3 &&
+        hasAddress(truncatedResult, base + 16) &&
+        hasAddress(truncatedResult, base + 32) &&
+        hasAddress(truncatedResult, base + 48);
+    bool extremeOk = extremeResult.count() == 1 &&
+        extremeResult.address(0) == base + 48;
+
+    munmap(page, pageSize);
+
+    printf("  rounded/truncated/extreme: %s\n",
+        (roundedOk && truncatedOk && extremeOk) ? "OK" : "FAILED");
+}
+
 static void test_process_enumeration() {
     printf("\n── Test: Process Enumeration ──\n");
     LinuxProcessEnumerator enumerator;
@@ -1003,6 +1068,7 @@ int main(int argc, char* argv[]) {
     test_unicode_string_scan();
     test_all_types_scan();
     test_percentage_scan();
+    test_float_rounding_scan();
     test_process_enumeration();
     test_process_memory(targetPid);
     test_write_memory(targetPid);

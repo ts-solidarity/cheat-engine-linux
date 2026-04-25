@@ -71,6 +71,7 @@ private:
     QLineEdit* scanValueEdit_;
     QComboBox* scanTypeCombo_;
     QComboBox* valueTypeCombo_;
+    QComboBox* floatRoundingCombo_;
     QPushButton* firstScanBtn_;
     QPushButton* nextScanBtn_;
     QPushButton* undoScanBtn_;
@@ -87,6 +88,7 @@ private:
     QLineEdit* alignEdit_;
     QLineEdit* percentValueEdit_;
     QLineEdit* percentValue2Edit_;
+    QLineEdit* floatToleranceEdit_;
 
     // Results
     QTableView* resultsView_;
