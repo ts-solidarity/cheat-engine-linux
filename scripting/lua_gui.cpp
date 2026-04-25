@@ -1,5 +1,5 @@
 /// Lua GUI bindings — create Qt6 widgets from Lua.
-/// Supports: createForm, createButton, createLabel, createEdit, createCheckBox, createTimer
+/// Supports: createForm, createButton, createLabel, createEdit, createCheckBox, createListView, createTimer
 /// Property access via __index/__newindex metamethods.
 
 #include "scripting/lua_gui.hpp"
@@ -15,6 +15,7 @@ extern "C" {
 #include <QLabel>
 #include <QLineEdit>
 #include <QCheckBox>
+#include <QListWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QApplication>
@@ -33,6 +34,8 @@ struct CallbackBinding {
 
 // Store Lua callback references per Qt object.
 static std::unordered_map<QObject*, CallbackBinding> clickCallbacks;
+static std::unordered_map<QObject*, CallbackBinding> changeCallbacks;
+static std::unordered_map<QObject*, CallbackBinding> closeCallbacks;
 static std::unordered_map<QObject*, CallbackBinding> timerCallbacks;
 static lua_State* guiLuaState = nullptr;
 
@@ -80,7 +83,10 @@ static void invokeLuaCallback(int ref, QWidget* widget, QTimer* timer = nullptr)
         return;
 
     lua_rawgeti(guiLuaState, LUA_REGISTRYINDEX, ref);
-    pushWidget(guiLuaState, widget, timer);
+    if (widget)
+        pushWidget(guiLuaState, widget, timer);
+    else
+        lua_pushnil(guiLuaState);
     if (lua_pcall(guiLuaState, 1, 0, 0) != LUA_OK) {
         const char* err = lua_tostring(guiLuaState, -1);
         std::fprintf(stderr, "[CE Lua GUI] callback error: %s\n", err ? err : "unknown error");
@@ -91,6 +97,7 @@ static void invokeLuaCallback(int ref, QWidget* widget, QTimer* timer = nullptr)
 static void trackDestroyed(QObject* object) {
     QObject::connect(object, &QObject::destroyed, [object]() {
         clearCallback(object, clickCallbacks);
+        clearCallback(object, changeCallbacks);
         clearCallback(object, timerCallbacks);
     });
 }
@@ -105,6 +112,11 @@ static int widget_index(lua_State* L) {
         if (auto* btn = qobject_cast<QPushButton*>(w)) { lua_pushstring(L, btn->text().toUtf8()); return 1; }
         if (auto* lbl = qobject_cast<QLabel*>(w)) { lua_pushstring(L, lbl->text().toUtf8()); return 1; }
         if (auto* ed = qobject_cast<QLineEdit*>(w)) { lua_pushstring(L, ed->text().toUtf8()); return 1; }
+        if (auto* list = qobject_cast<QListWidget*>(w)) {
+            auto* item = list->currentItem();
+            lua_pushstring(L, item ? item->text().toUtf8().constData() : "");
+            return 1;
+        }
         lua_pushstring(L, w->windowTitle().toUtf8()); return 1;
     }
     if (!strcmp(key, "Width")) { lua_pushinteger(L, w->width()); return 1; }
@@ -116,6 +128,9 @@ static int widget_index(lua_State* L) {
     }
     if (!strcmp(key, "Checked")) {
         if (auto* cb = qobject_cast<QCheckBox*>(w)) { lua_pushboolean(L, cb->isChecked()); return 1; }
+    }
+    if (!strcmp(key, "Count")) {
+        if (auto* list = qobject_cast<QListWidget*>(w)) { lua_pushinteger(L, list->count()); return 1; }
     }
     if (!strcmp(key, "Interval") && lw->timer) { lua_pushinteger(L, lw->timer->interval()); return 1; }
 
@@ -137,6 +152,23 @@ static int widget_index(lua_State* L) {
         });
         return 1;
     }
+    if (!strcmp(key, "addItem")) {
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            auto* w = checkWidget(L, 1)->widget;
+            auto* list = qobject_cast<QListWidget*>(w);
+            if (list) list->addItem(luaL_checkstring(L, 2));
+            return 0;
+        });
+        return 1;
+    }
+    if (!strcmp(key, "clear")) {
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            auto* w = checkWidget(L, 1)->widget;
+            if (auto* list = qobject_cast<QListWidget*>(w)) list->clear();
+            return 0;
+        });
+        return 1;
+    }
 
     lua_pushnil(L);
     return 1;
@@ -153,6 +185,9 @@ static int widget_newindex(lua_State* L) {
         if (auto* btn = qobject_cast<QPushButton*>(w)) btn->setText(val);
         else if (auto* lbl = qobject_cast<QLabel*>(w)) lbl->setText(val);
         else if (auto* ed = qobject_cast<QLineEdit*>(w)) ed->setText(val);
+        else if (auto* list = qobject_cast<QListWidget*>(w)) {
+            if (auto* item = list->currentItem()) item->setText(val);
+        }
         else w->setWindowTitle(val);
         return 0;
     }
@@ -197,6 +232,52 @@ static int widget_newindex(lua_State* L) {
             return 0;
         }
         unrefCallback(ref);
+        return 0;
+    }
+    if (!strcmp(key, "OnChange")) {
+        clearCallback(w, changeCallbacks);
+        if (lua_isnil(L, 3))
+            return 0;
+        luaL_checktype(L, 3, LUA_TFUNCTION);
+        int ref = storeCallback(L, 3);
+        CallbackBinding binding;
+        binding.ref = ref;
+        if (auto* ed = qobject_cast<QLineEdit*>(w)) {
+            binding.connection = QObject::connect(ed, &QLineEdit::textChanged, [ref, w]() {
+                invokeLuaCallback(ref, w);
+            });
+            changeCallbacks[w] = binding;
+            return 0;
+        } else if (auto* cb = qobject_cast<QCheckBox*>(w)) {
+            binding.connection = QObject::connect(cb, &QCheckBox::toggled, [ref, w]() {
+                invokeLuaCallback(ref, w);
+            });
+            changeCallbacks[w] = binding;
+            return 0;
+        } else if (auto* list = qobject_cast<QListWidget*>(w)) {
+            binding.connection = QObject::connect(list, &QListWidget::currentRowChanged, [ref, w]() {
+                invokeLuaCallback(ref, w);
+            });
+            changeCallbacks[w] = binding;
+            return 0;
+        }
+        unrefCallback(ref);
+        return 0;
+    }
+    if (!strcmp(key, "OnClose")) {
+        clearCallback(w, closeCallbacks);
+        if (lua_isnil(L, 3))
+            return 0;
+        luaL_checktype(L, 3, LUA_TFUNCTION);
+        int ref = storeCallback(L, 3);
+        CallbackBinding binding;
+        binding.ref = ref;
+        binding.connection = QObject::connect(w, &QObject::destroyed, [ref, w]() {
+            invokeLuaCallback(ref, nullptr);
+            unrefCallback(ref);
+            closeCallbacks.erase(w);
+        });
+        closeCallbacks[w] = binding;
         return 0;
     }
     if (!strcmp(key, "OnTimer") && lw->timer) {
@@ -275,6 +356,15 @@ static int l_createCheckBox(lua_State* L) {
     return 1;
 }
 
+static int l_createListView(lua_State* L) {
+    auto* parent = getParentWidget(L, 1);
+    auto* list = new QListWidget(parent);
+    if (parent && parent->layout()) parent->layout()->addWidget(list);
+    trackDestroyed(list);
+    pushWidget(L, list);
+    return 1;
+}
+
 static int l_createTimer(lua_State* L) {
     auto* parent = getParentWidget(L, 1);
     int enabledIndex = 1;
@@ -293,6 +383,14 @@ static int l_createTimer(lua_State* L) {
         timer->start();
     pushWidget(L, dummy, timer);
     return 1;
+}
+
+static int l_getProperty(lua_State* L) {
+    return widget_index(L);
+}
+
+static int l_setProperty(lua_State* L) {
+    return widget_newindex(L);
 }
 
 // ── Registration ──
@@ -314,7 +412,10 @@ void registerLuaGuiBindings(lua_State* L) {
     lua_register(L, "createLabel", l_createLabel);
     lua_register(L, "createEdit", l_createEdit);
     lua_register(L, "createCheckBox", l_createCheckBox);
+    lua_register(L, "createListView", l_createListView);
     lua_register(L, "createTimer", l_createTimer);
+    lua_register(L, "getProperty", l_getProperty);
+    lua_register(L, "setProperty", l_setProperty);
 }
 
 } // namespace ce
