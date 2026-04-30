@@ -193,6 +193,7 @@ static void test_trainer_generation() {
     entry.address = 0x12345678;
     entry.type = ValueType::Int32;
     entry.value = "1337";
+    entry.hotkeyKeys = "Ctrl+H";
     table.entries.push_back(entry);
 
     TrainerGenerator generator;
@@ -202,7 +203,9 @@ static void test_trainer_generation() {
         source.find("Health \\\"current\\\"\\nline") != std::string::npos &&
         source.find("#include <sys/select.h>") != std::string::npos &&
         source.find("find_process_by_name") != std::string::npos &&
-        source.find("else target_pid = find_process_by_name") != std::string::npos;
+        source.find("else target_pid = find_process_by_name") != std::string::npos &&
+        source.find("hotkey_matches") != std::string::npos &&
+        source.find("\"Ctrl+H\"") != std::string::npos;
 
     auto outputPath = std::filesystem::temp_directory_path() /
         ("cecore-trainer-" + std::to_string(getpid()));

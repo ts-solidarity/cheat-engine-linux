@@ -223,13 +223,15 @@ Note: the register editor now includes a read-only floating-point/SIMD panel pop
 **3.1 Trainer Generation**
 - [x] Generate standalone binary from cheat table
 - [ ] Embed Lua + auto-assembler scripts
-- [ ] Hotkey bindings in trainer
+- [x] Hotkey bindings in trainer
 - [x] Process auto-detection
 - [ ] Trainer UI (simple enable/disable checkboxes)
 
 Note: trainer generation now has regression coverage for standalone C source generation and binary compilation, including escaped table/game text so generated trainers remain valid C when descriptions contain quotes or newlines.
 
 Note: generated trainers now auto-detect a target process by scanning `/proc/*/comm` for the table game name when no PID argument is provided, while still accepting an explicit PID override.
+
+Note: generated trainers now emit saved table hotkeys into their toggle list and match simple terminal-compatible bindings such as single-character keys, `Shift+X`, and `Ctrl+X`, with numeric fallbacks when no hotkey is configured.
 
 **3.2 Graphics Overlay (Linux equivalent of D3D hook)**
 - [ ] X11 overlay window (transparent, always-on-top, click-through)

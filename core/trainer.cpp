@@ -105,6 +105,18 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "    return 0;\n";
     src << "}\n\n";
 
+    src << "static int hotkey_matches(int c, const char* spec, int fallback) {\n";
+    src << "    if (!spec || !*spec) return c == fallback;\n";
+    src << "    if (strlen(spec) == 1) return tolower((unsigned char)c) == tolower((unsigned char)spec[0]);\n";
+    src << "    if (strncmp(spec, \"Ctrl+\", 5) == 0 && spec[5] && !spec[6]) {\n";
+    src << "        return c == (tolower((unsigned char)spec[5]) & 0x1f);\n";
+    src << "    }\n";
+    src << "    if (strncmp(spec, \"Shift+\", 6) == 0 && spec[6] && !spec[7]) {\n";
+    src << "        return c == toupper((unsigned char)spec[6]);\n";
+    src << "    }\n";
+    src << "    return c == fallback;\n";
+    src << "}\n\n";
+
     src << "static int rpm(void* addr, void* buf, size_t sz) {\n";
     src << "    struct iovec l = {buf, sz}, r = {addr, sz};\n";
     src << "    return process_vm_readv(target_pid, &l, 1, &r, 1, 0) >= 0;\n";
@@ -164,11 +176,13 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     for (size_t i = 0; i < table.entries.size(); ++i) {
         auto& e = table.entries[i];
         if (e.isGroup || e.address == 0) continue;
-        src << "    printf(\"  " << (keyIdx + 1) << ": %s\\n\", " << cString(e.description) << ");\n";
+        auto fallbackKey = static_cast<char>('1' + keyIdx);
+        auto hotkeyText = e.hotkeyKeys.empty() ? std::string(1, fallbackKey) : e.hotkeyKeys;
+        src << "    printf(\"  %s: %s\\n\", " << cString(hotkeyText) << ", " << cString(e.description) << ");\n";
         ++keyIdx;
     }
 
-    src << "    printf(\"\\nPress number keys to toggle. Ctrl+C to exit.\\n\\n\");\n\n";
+    src << "    printf(\"\\nPress listed hotkeys to toggle. Ctrl+C to exit.\\n\\n\");\n\n";
 
     src << "    // Non-blocking terminal input\n";
     src << "    struct termios oldt, newt;\n";
@@ -187,7 +201,8 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     for (size_t i = 0; i < table.entries.size(); ++i) {
         auto& e = table.entries[i];
         if (e.isGroup || e.address == 0) continue;
-        src << "            if (c == '" << (keyIdx + 1) << "') toggle_cheat_" << i << "();\n";
+        src << "            if (hotkey_matches((unsigned char)c, " << cString(e.hotkeyKeys)
+            << ", '" << static_cast<char>('1' + keyIdx) << "')) toggle_cheat_" << i << "();\n";
         ++keyIdx;
     }
 
