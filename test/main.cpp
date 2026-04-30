@@ -205,7 +205,9 @@ static void test_trainer_generation() {
         source.find("find_process_by_name") != std::string::npos &&
         source.find("else target_pid = find_process_by_name") != std::string::npos &&
         source.find("hotkey_matches") != std::string::npos &&
-        source.find("\"Ctrl+H\"") != std::string::npos;
+        source.find("\"Ctrl+H\"") != std::string::npos &&
+        source.find("print_trainer_ui") != std::string::npos &&
+        source.find("[%c]") != std::string::npos;
 
     auto outputPath = std::filesystem::temp_directory_path() /
         ("cecore-trainer-" + std::to_string(getpid()));

@@ -135,10 +135,27 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
         src << "static int cheat_" << i << "_enabled = 0;\n";
         src << "static void toggle_cheat_" << i << "() {\n";
         src << "    cheat_" << i << "_enabled = !cheat_" << i << "_enabled;\n";
-        src << "    printf(\"[%s] %s\\n\", cheat_" << i << "_enabled ? \"ON\" : \"OFF\", "
-            << cString(e.description) << ");\n";
         src << "}\n\n";
     }
+
+    src << "static void print_trainer_ui() {\n";
+    src << "    printf(\"\\033[2J\\033[H\");\n";
+    src << "    printf(\"Trainer for: %s\\n\", " << cString(table.gameName) << ");\n";
+    src << "    printf(\"Target PID: %d\\n\\n\", target_pid);\n";
+    src << "    printf(\"Cheats:\\n\");\n";
+    int keyIdx = 0;
+    for (size_t i = 0; i < table.entries.size(); ++i) {
+        auto& e = table.entries[i];
+        if (e.isGroup || e.address == 0) continue;
+        auto fallbackKey = static_cast<char>('1' + keyIdx);
+        auto hotkeyText = e.hotkeyKeys.empty() ? std::string(1, fallbackKey) : e.hotkeyKeys;
+        src << "    printf(\"  [%c] %-12s %s\\n\", cheat_" << i << "_enabled ? 'x' : ' ', "
+            << cString(hotkeyText) << ", " << cString(e.description) << ");\n";
+        ++keyIdx;
+    }
+    src << "    printf(\"\\nPress listed hotkeys to toggle. Ctrl+C to exit.\\n\");\n";
+    src << "    fflush(stdout);\n";
+    src << "}\n\n";
 
     // Freeze loop
     src << "static volatile int running = 1;\n";
@@ -168,21 +185,6 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "        return 1;\n";
     src << "    }\n";
     src << "    signal(SIGINT, sighandler);\n";
-    src << "    printf(\"Trainer for: %s\\n\", " << cString(table.gameName) << ");\n";
-    src << "    printf(\"Target PID: %d\\n\\n\", target_pid);\n";
-    src << "    printf(\"Hotkeys:\\n\");\n";
-
-    int keyIdx = 0;
-    for (size_t i = 0; i < table.entries.size(); ++i) {
-        auto& e = table.entries[i];
-        if (e.isGroup || e.address == 0) continue;
-        auto fallbackKey = static_cast<char>('1' + keyIdx);
-        auto hotkeyText = e.hotkeyKeys.empty() ? std::string(1, fallbackKey) : e.hotkeyKeys;
-        src << "    printf(\"  %s: %s\\n\", " << cString(hotkeyText) << ", " << cString(e.description) << ");\n";
-        ++keyIdx;
-    }
-
-    src << "    printf(\"\\nPress listed hotkeys to toggle. Ctrl+C to exit.\\n\\n\");\n\n";
 
     src << "    // Non-blocking terminal input\n";
     src << "    struct termios oldt, newt;\n";
@@ -190,6 +192,7 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "    newt = oldt;\n";
     src << "    newt.c_lflag &= ~(ICANON | ECHO);\n";
     src << "    tcsetattr(0, TCSANOW, &newt);\n\n";
+    src << "    print_trainer_ui();\n\n";
 
     src << "    while (running) {\n";
     src << "        fd_set fds; FD_ZERO(&fds); FD_SET(0, &fds);\n";
@@ -202,7 +205,7 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
         auto& e = table.entries[i];
         if (e.isGroup || e.address == 0) continue;
         src << "            if (hotkey_matches((unsigned char)c, " << cString(e.hotkeyKeys)
-            << ", '" << static_cast<char>('1' + keyIdx) << "')) toggle_cheat_" << i << "();\n";
+            << ", '" << static_cast<char>('1' + keyIdx) << "')) { toggle_cheat_" << i << "(); print_trainer_ui(); }\n";
         ++keyIdx;
     }
 
