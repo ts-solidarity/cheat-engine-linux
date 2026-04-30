@@ -2,19 +2,71 @@
 #include <sstream>
 #include <fstream>
 #include <cstdlib>
+#include <cstdio>
+#include <filesystem>
 
 namespace ce {
+namespace {
+
+std::string cString(const std::string& text) {
+    std::string escaped;
+    escaped.reserve(text.size() + 2);
+    escaped.push_back('"');
+    for (unsigned char c : text) {
+        switch (c) {
+            case '\\': escaped += "\\\\"; break;
+            case '"': escaped += "\\\""; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default:
+                if (c < 0x20 || c >= 0x7f) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\x%02x", c);
+                    escaped += buf;
+                } else {
+                    escaped.push_back(static_cast<char>(c));
+                }
+                break;
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string shellQuote(const std::string& text) {
+    std::string quoted = "'";
+    for (char c : text) {
+        if (c == '\'')
+            quoted += "'\\''";
+        else
+            quoted.push_back(c);
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+std::string lineCommentText(std::string text) {
+    for (char& c : text) {
+        if (c == '\r' || c == '\n')
+            c = ' ';
+    }
+    return text;
+}
+
+} // namespace
 
 std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     std::ostringstream src;
 
-    src << "// Auto-generated trainer for: " << table.gameName << "\n";
-    src << "// Author: " << table.author << "\n";
+    src << "// Auto-generated trainer for: " << lineCommentText(table.gameName) << "\n";
+    src << "// Author: " << lineCommentText(table.author) << "\n";
     src << "#include <stdio.h>\n";
     src << "#include <stdlib.h>\n";
     src << "#include <string.h>\n";
     src << "#include <unistd.h>\n";
     src << "#include <sys/uio.h>\n";
+    src << "#include <sys/select.h>\n";
     src << "#include <signal.h>\n";
     src << "#include <termios.h>\n\n";
 
@@ -38,7 +90,8 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
         src << "static int cheat_" << i << "_enabled = 0;\n";
         src << "static void toggle_cheat_" << i << "() {\n";
         src << "    cheat_" << i << "_enabled = !cheat_" << i << "_enabled;\n";
-        src << "    printf(\"[%s] " << e.description << "\\n\", cheat_" << i << "_enabled ? \"ON\" : \"OFF\");\n";
+        src << "    printf(\"[%s] %s\\n\", cheat_" << i << "_enabled ? \"ON\" : \"OFF\", "
+            << cString(e.description) << ");\n";
         src << "}\n\n";
     }
 
@@ -65,7 +118,7 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "    if (argc < 2) { printf(\"Usage: %s <pid>\\n\", argv[0]); return 1; }\n";
     src << "    target_pid = atoi(argv[1]);\n";
     src << "    signal(SIGINT, sighandler);\n";
-    src << "    printf(\"Trainer for: " << table.gameName << "\\n\");\n";
+    src << "    printf(\"Trainer for: %s\\n\", " << cString(table.gameName) << ");\n";
     src << "    printf(\"Target PID: %d\\n\\n\", target_pid);\n";
     src << "    printf(\"Hotkeys:\\n\");\n";
 
@@ -73,7 +126,7 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     for (size_t i = 0; i < table.entries.size(); ++i) {
         auto& e = table.entries[i];
         if (e.isGroup || e.address == 0) continue;
-        src << "    printf(\"  " << (keyIdx + 1) << ": " << e.description << "\\n\");\n";
+        src << "    printf(\"  " << (keyIdx + 1) << ": %s\\n\", " << cString(e.description) << ");\n";
         ++keyIdx;
     }
 
@@ -128,7 +181,7 @@ std::string TrainerGenerator::generateBinary(const CheatTable& table, const std:
     f << source;
     f.close();
 
-    auto cmd = "gcc -O2 -o " + outputPath + " " + srcPath + " 2>&1";
+    auto cmd = "gcc -O2 -o " + shellQuote(outputPath) + " " + shellQuote(srcPath) + " 2>&1";
     auto* pipe = popen(cmd.c_str(), "r");
     if (!pipe) return "Failed to run gcc";
 
@@ -137,7 +190,7 @@ std::string TrainerGenerator::generateBinary(const CheatTable& table, const std:
     while (fgets(buf, sizeof(buf), pipe)) output += buf;
     int ret = pclose(pipe);
 
-    std::remove(srcPath.c_str());
+    std::filesystem::remove(srcPath);
 
     if (ret != 0) return "Compilation failed: " + output;
     return {};

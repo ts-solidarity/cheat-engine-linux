@@ -2,6 +2,7 @@
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
+#include "core/trainer.hpp"
 #include "analysis/code_analysis.hpp"
 #include "analysis/structure_tools.hpp"
 #include "debug/breakpoint_manager.hpp"
@@ -178,6 +179,41 @@ static void test_cheat_table_json() {
     printf("  JSON round trip: %s\n", jsonOk ? "OK" : "FAILED");
     printf("  CT XML round trip: %s\n", xmlOk ? "OK" : "FAILED");
     printf("  CT XML CE type names: %s\n", xmlTypeNamesOk ? "OK" : "FAILED");
+}
+
+static void test_trainer_generation() {
+    printf("\n── Test: Trainer Generation ──\n");
+
+    CheatTable table;
+    table.gameName = "Trainer \"Smoke\"\nGame";
+    table.author = "cecore";
+
+    CheatEntry entry;
+    entry.description = "Health \"current\"\nline";
+    entry.address = 0x12345678;
+    entry.type = ValueType::Int32;
+    entry.value = "1337";
+    table.entries.push_back(entry);
+
+    TrainerGenerator generator;
+    auto source = generator.generateSource(table);
+    bool sourceOk =
+        source.find("Trainer \\\"Smoke\\\"\\nGame") != std::string::npos &&
+        source.find("Health \\\"current\\\"\\nline") != std::string::npos &&
+        source.find("#include <sys/select.h>") != std::string::npos;
+
+    auto outputPath = std::filesystem::temp_directory_path() /
+        ("cecore-trainer-" + std::to_string(getpid()));
+    auto error = generator.generateBinary(table, outputPath.string());
+    bool binaryOk = error.empty() && std::filesystem::exists(outputPath);
+
+    std::filesystem::remove(outputPath);
+    std::filesystem::remove(outputPath.string() + ".c");
+
+    printf("  source escaping: %s\n", sourceOk ? "OK" : "FAILED");
+    printf("  binary compile: %s\n", binaryOk ? "OK" : "FAILED");
+    if (!error.empty())
+        printf("    error: %s\n", error.c_str());
 }
 
 static void test_code_analysis_references() {
@@ -1831,6 +1867,7 @@ int main(int argc, char* argv[]) {
     }
 
     test_cheat_table_json();
+    test_trainer_generation();
     test_code_analysis_references();
     test_stack_trace_frame_walk();
     test_structure_tools();

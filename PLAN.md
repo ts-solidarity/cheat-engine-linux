@@ -221,11 +221,13 @@ Note: the register editor now includes a read-only floating-point/SIMD panel pop
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 
 **3.1 Trainer Generation**
-- [ ] Generate standalone binary from cheat table
+- [x] Generate standalone binary from cheat table
 - [ ] Embed Lua + auto-assembler scripts
 - [ ] Hotkey bindings in trainer
 - [ ] Process auto-detection
 - [ ] Trainer UI (simple enable/disable checkboxes)
+
+Note: trainer generation now has regression coverage for standalone C source generation and binary compilation, including escaped table/game text so generated trainers remain valid C when descriptions contain quotes or newlines.
 
 **3.2 Graphics Overlay (Linux equivalent of D3D hook)**
 - [ ] X11 overlay window (transparent, always-on-top, click-through)
