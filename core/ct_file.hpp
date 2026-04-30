@@ -60,6 +60,10 @@ struct CheatTable {
 
     /// Load from JSON.
     bool loadJson(const std::string& path);
+
+    /// Save/load a password-protected .CETRAINER payload.
+    bool saveProtected(const std::string& path, const std::string& password) const;
+    bool loadProtected(const std::string& path, const std::string& password);
 };
 
 } // namespace ce

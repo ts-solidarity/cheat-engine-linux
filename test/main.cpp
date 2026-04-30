@@ -123,8 +123,11 @@ static void test_cheat_table_json() {
         ("cecore-table-" + std::to_string(getpid()) + ".json");
     auto xmlPath = std::filesystem::temp_directory_path() /
         ("cecore-table-" + std::to_string(getpid()) + ".CT");
+    auto protectedPath = std::filesystem::temp_directory_path() /
+        ("cecore-table-" + std::to_string(getpid()) + ".CETRAINER");
 
-    if (!table.saveJson(jsonPath.string()) || !table.save(xmlPath.string())) {
+    if (!table.saveJson(jsonPath.string()) || !table.save(xmlPath.string()) ||
+        !table.saveProtected(protectedPath.string(), "secret")) {
         printf("  Save FAILED\n");
         return;
     }
@@ -173,12 +176,19 @@ static void test_cheat_table_json() {
         xmlText.find("<Type>4 Bytes</Type>") != std::string::npos &&
         xmlText.find("<Type>Float</Type>") != std::string::npos &&
         xmlText.find("<Type>Array of byte</Type>") != std::string::npos;
+    CheatTable protectedLoaded;
+    bool protectedOk = protectedLoaded.loadProtected(protectedPath.string(), "secret") &&
+        matchesTable(protectedLoaded);
+    CheatTable wrongPassword;
+    bool wrongPasswordOk = !wrongPassword.loadProtected(protectedPath.string(), "wrong");
     std::filesystem::remove(jsonPath);
     std::filesystem::remove(xmlPath);
+    std::filesystem::remove(protectedPath);
 
     printf("  JSON round trip: %s\n", jsonOk ? "OK" : "FAILED");
     printf("  CT XML round trip: %s\n", xmlOk ? "OK" : "FAILED");
     printf("  CT XML CE type names: %s\n", xmlTypeNamesOk ? "OK" : "FAILED");
+    printf("  CETRAINER protected round trip: %s\n", (protectedOk && wrongPasswordOk) ? "OK" : "FAILED");
 }
 
 static void test_trainer_generation() {

@@ -4,10 +4,46 @@
 #include <cstring>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <unordered_map>
 
 // Simple XML writer/reader (no external dependency)
 namespace ce {
+
+static constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+static constexpr uint64_t kFnvPrime = 1099511628211ULL;
+
+static uint64_t fnv1a(const std::string& text) {
+    uint64_t hash = kFnvOffset;
+    for (unsigned char c : text) {
+        hash ^= c;
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+static uint64_t xorshift64(uint64_t& state) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+}
+
+static std::vector<uint8_t> xorCrypt(const std::string& input, const std::string& password) {
+    uint64_t state = fnv1a(password.empty() ? std::string("cecore") : password);
+    std::vector<uint8_t> out(input.begin(), input.end());
+    for (auto& byte : out)
+        byte ^= static_cast<uint8_t>(xorshift64(state) & 0xff);
+    return out;
+}
+
+static std::string xorDecrypt(const std::vector<uint8_t>& input, const std::string& password) {
+    uint64_t state = fnv1a(password.empty() ? std::string("cecore") : password);
+    std::string out(input.begin(), input.end());
+    for (auto& byte : out)
+        byte = static_cast<char>(static_cast<unsigned char>(byte) ^ static_cast<uint8_t>(xorshift64(state) & 0xff));
+    return out;
+}
 
 // ── XML writing helpers ──
 static std::string xmlEscape(const std::string& s) {
@@ -701,6 +737,66 @@ bool CheatTable::loadJson(const std::string& path) {
     }
 
     return true;
+}
+
+bool CheatTable::saveProtected(const std::string& path, const std::string& password) const {
+    auto tempPath = std::filesystem::path(path).string() + ".json.tmp";
+    if (!saveJson(tempPath))
+        return false;
+
+    std::ifstream in(tempPath, std::ios::binary);
+    std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::filesystem::remove(tempPath);
+    if (json.empty())
+        return false;
+
+    auto encrypted = xorCrypt(json, password);
+    std::ofstream out(path, std::ios::binary);
+    if (!out)
+        return false;
+
+    out << "CETRAINER1\n";
+    out << fnv1a(password) << "\n";
+    out.write(reinterpret_cast<const char*>(encrypted.data()), static_cast<std::streamsize>(encrypted.size()));
+    return out.good();
+}
+
+bool CheatTable::loadProtected(const std::string& path, const std::string& password) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return false;
+
+    std::string magic;
+    std::string hashLine;
+    if (!std::getline(in, magic) || !std::getline(in, hashLine))
+        return false;
+    if (magic != "CETRAINER1")
+        return false;
+
+    uint64_t expectedHash = 0;
+    try {
+        expectedHash = std::stoull(hashLine);
+    } catch (...) {
+        return false;
+    }
+    if (expectedHash != fnv1a(password))
+        return false;
+
+    std::vector<uint8_t> encrypted((std::istreambuf_iterator<char>(in)), {});
+    auto json = xorDecrypt(encrypted, password);
+
+    auto tempPath = std::filesystem::path(path).string() + ".json.tmp";
+    {
+        std::ofstream out(tempPath, std::ios::binary);
+        if (!out)
+            return false;
+        out.write(json.data(), static_cast<std::streamsize>(json.size()));
+    }
+
+    bool loaded = loadJson(tempPath);
+    std::filesystem::remove(tempPath);
+    return loaded;
 }
 
 } // namespace ce

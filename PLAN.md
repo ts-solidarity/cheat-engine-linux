@@ -106,7 +106,7 @@ Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field of
 - [x] Embedded auto-assembler scripts
 - [x] Structure definitions in table
 - [x] Table metadata (game name, version, author)
-- [ ] Table encryption/protection for .CETRAINER format
+- [x] Table encryption/protection for .CETRAINER format
 
 Note: active auto-assembler records loaded from a table now run their enable script when a process is open; otherwise they are loaded inactive with a warning.
 
@@ -217,6 +217,8 @@ Note: the address-list context menu now includes a hotkey configuration dialog b
 Note: .CT XML now writes CE-style textual variable types such as `4 Bytes`, `Float`, and `Array of byte`, while the loader still accepts older numeric type IDs for backward compatibility.
 
 Note: the register editor now includes a read-only floating-point/SIMD panel populated from Linux `PTRACE_GETREGSET` xstate data, showing XMM low 128-bit values and YMM high 128-bit values when the target exposes AVX state.
+
+Note: `.CETRAINER` save/load now supports a lightweight password-protected payload wrapper around the native JSON table format, with encrypted bytes, password verification, and wrong-password regression coverage.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 
