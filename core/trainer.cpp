@@ -73,6 +73,17 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "#include <termios.h>\n\n";
 
     src << "static int target_pid = 0;\n\n";
+    src << "static const char* embedded_table_lua = " << cString(table.luaScript) << ";\n";
+    src << "struct embedded_script_record { const char* description; const char* lua; const char* autoasm; };\n";
+    src << "static const struct embedded_script_record embedded_scripts[] = {\n";
+    for (const auto& e : table.entries) {
+        if (e.luaScript.empty() && e.autoAsmScript.empty())
+            continue;
+        src << "    {" << cString(e.description) << ", " << cString(e.luaScript)
+            << ", " << cString(e.autoAsmScript) << "},\n";
+    }
+    src << "};\n";
+    src << "static const int embedded_script_count = sizeof(embedded_scripts) / sizeof(embedded_scripts[0]);\n\n";
 
     src << "static int is_numeric_name(const char* s) {\n";
     src << "    if (!s || !*s) return 0;\n";
@@ -142,6 +153,9 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "    printf(\"\\033[2J\\033[H\");\n";
     src << "    printf(\"Trainer for: %s\\n\", " << cString(table.gameName) << ");\n";
     src << "    printf(\"Target PID: %d\\n\\n\", target_pid);\n";
+    src << "    if (*embedded_table_lua || embedded_script_count > 0) {\n";
+    src << "        printf(\"Embedded scripts: table=%s entries=%d\\n\\n\", *embedded_table_lua ? \"yes\" : \"no\", embedded_script_count);\n";
+    src << "    }\n";
     src << "    printf(\"Cheats:\\n\");\n";
     int keyIdx = 0;
     for (size_t i = 0; i < table.entries.size(); ++i) {

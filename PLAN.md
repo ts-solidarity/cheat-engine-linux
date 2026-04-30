@@ -222,7 +222,7 @@ Note: the register editor now includes a read-only floating-point/SIMD panel pop
 
 **3.1 Trainer Generation**
 - [x] Generate standalone binary from cheat table
-- [ ] Embed Lua + auto-assembler scripts
+- [x] Embed Lua + auto-assembler scripts
 - [x] Hotkey bindings in trainer
 - [x] Process auto-detection
 - [x] Trainer UI (simple enable/disable checkboxes)
@@ -234,6 +234,8 @@ Note: generated trainers now auto-detect a target process by scanning `/proc/*/c
 Note: generated trainers now emit saved table hotkeys into their toggle list and match simple terminal-compatible bindings such as single-character keys, `Shift+X`, and `Ctrl+X`, with numeric fallbacks when no hotkey is configured.
 
 Note: generated trainers now redraw a simple terminal UI with `[x]`/`[ ]` enable-state checkboxes, hotkey labels, and cheat descriptions after each toggle.
+
+Note: generated trainers now embed table-level Lua and per-entry Lua/auto-assembler script payloads as escaped C string constants, and display script presence in the trainer header.
 
 **3.2 Graphics Overlay (Linux equivalent of D3D hook)**
 - [ ] X11 overlay window (transparent, always-on-top, click-through)

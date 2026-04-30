@@ -187,6 +187,7 @@ static void test_trainer_generation() {
     CheatTable table;
     table.gameName = "Trainer \"Smoke\"\nGame";
     table.author = "cecore";
+    table.luaScript = "print('table trainer lua')\n";
 
     CheatEntry entry;
     entry.description = "Health \"current\"\nline";
@@ -194,6 +195,8 @@ static void test_trainer_generation() {
     entry.type = ValueType::Int32;
     entry.value = "1337";
     entry.hotkeyKeys = "Ctrl+H";
+    entry.luaScript = "print('entry trainer lua')\n";
+    entry.autoAsmScript = "[ENABLE]\nnop\n";
     table.entries.push_back(entry);
 
     TrainerGenerator generator;
@@ -207,7 +210,10 @@ static void test_trainer_generation() {
         source.find("hotkey_matches") != std::string::npos &&
         source.find("\"Ctrl+H\"") != std::string::npos &&
         source.find("print_trainer_ui") != std::string::npos &&
-        source.find("[%c]") != std::string::npos;
+        source.find("[%c]") != std::string::npos &&
+        source.find("embedded_table_lua") != std::string::npos &&
+        source.find("entry trainer lua") != std::string::npos &&
+        source.find("[ENABLE]\\nnop\\n") != std::string::npos;
 
     auto outputPath = std::filesystem::temp_directory_path() /
         ("cecore-trainer-" + std::to_string(getpid()));
