@@ -64,6 +64,8 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "#include <stdio.h>\n";
     src << "#include <stdlib.h>\n";
     src << "#include <string.h>\n";
+    src << "#include <ctype.h>\n";
+    src << "#include <dirent.h>\n";
     src << "#include <unistd.h>\n";
     src << "#include <sys/uio.h>\n";
     src << "#include <sys/select.h>\n";
@@ -71,6 +73,37 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
     src << "#include <termios.h>\n\n";
 
     src << "static int target_pid = 0;\n\n";
+
+    src << "static int is_numeric_name(const char* s) {\n";
+    src << "    if (!s || !*s) return 0;\n";
+    src << "    while (*s) { if (!isdigit((unsigned char)*s++)) return 0; }\n";
+    src << "    return 1;\n";
+    src << "}\n\n";
+
+    src << "static int find_process_by_name(const char* name) {\n";
+    src << "    DIR* dir = opendir(\"/proc\");\n";
+    src << "    if (!dir) return 0;\n";
+    src << "    struct dirent* ent;\n";
+    src << "    while ((ent = readdir(dir)) != NULL) {\n";
+    src << "        if (!is_numeric_name(ent->d_name)) continue;\n";
+    src << "        char path[256];\n";
+    src << "        snprintf(path, sizeof(path), \"/proc/%s/comm\", ent->d_name);\n";
+    src << "        FILE* f = fopen(path, \"r\");\n";
+    src << "        if (!f) continue;\n";
+    src << "        char comm[256] = {0};\n";
+    src << "        if (fgets(comm, sizeof(comm), f)) {\n";
+    src << "            comm[strcspn(comm, \"\\r\\n\")] = 0;\n";
+    src << "            if (strcmp(comm, name) == 0) {\n";
+    src << "                fclose(f);\n";
+    src << "                closedir(dir);\n";
+    src << "                return atoi(ent->d_name);\n";
+    src << "            }\n";
+    src << "        }\n";
+    src << "        fclose(f);\n";
+    src << "    }\n";
+    src << "    closedir(dir);\n";
+    src << "    return 0;\n";
+    src << "}\n\n";
 
     src << "static int rpm(void* addr, void* buf, size_t sz) {\n";
     src << "    struct iovec l = {buf, sz}, r = {addr, sz};\n";
@@ -115,8 +148,13 @@ std::string TrainerGenerator::generateSource(const CheatTable& table) const {
 
     // Main
     src << "int main(int argc, char** argv) {\n";
-    src << "    if (argc < 2) { printf(\"Usage: %s <pid>\\n\", argv[0]); return 1; }\n";
-    src << "    target_pid = atoi(argv[1]);\n";
+    src << "    if (argc >= 2) target_pid = atoi(argv[1]);\n";
+    src << "    else target_pid = find_process_by_name(" << cString(table.gameName) << ");\n";
+    src << "    if (target_pid <= 0) {\n";
+    src << "        printf(\"Usage: %s <pid>\\n\", argv[0]);\n";
+    src << "        printf(\"Auto-detection did not find process: %s\\n\", " << cString(table.gameName) << ");\n";
+    src << "        return 1;\n";
+    src << "    }\n";
     src << "    signal(SIGINT, sighandler);\n";
     src << "    printf(\"Trainer for: %s\\n\", " << cString(table.gameName) << ");\n";
     src << "    printf(\"Target PID: %d\\n\\n\", target_pid);\n";
