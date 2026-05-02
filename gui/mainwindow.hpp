@@ -26,6 +26,7 @@ namespace ce::gui {
 
 class ScanResultsModel;
 class AddressListModel;
+class OverlayWindow;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -53,6 +54,8 @@ private:
     void updateScanButtons();
     void startCodeFinder(int row, bool writesOnly);
     void rebuildValueHotkeys();
+    void showOverlayDialog();
+    void updateOverlayStatus();
 
     // Process
     std::unique_ptr<os::LinuxProcessHandle> process_;
@@ -105,6 +108,7 @@ private:
     QTableView* addressListView_;
     AddressListModel* addressListModel_;
     std::vector<QShortcut*> valueHotkeyShortcuts_;
+    OverlayWindow* overlayWindow_ = nullptr;
 };
 
 // ── Models ──

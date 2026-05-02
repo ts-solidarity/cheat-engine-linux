@@ -12,6 +12,7 @@
 #include "gui/heapregions.hpp"
 #include "gui/memoryregions.hpp"
 #include "gui/modulelist.hpp"
+#include "gui/overlay.hpp"
 #include "gui/stackview.hpp"
 #include "gui/threadlist.hpp"
 #include "gui/settingsdialog.hpp"
@@ -201,6 +202,8 @@ void MainWindow::setupMenus() {
         console->show();
     }, QKeySequence("Ctrl+Shift+L"));
     tools->addSeparator();
+    tools->addAction("Overlay...", this, &MainWindow::showOverlayDialog);
+    tools->addSeparator();
     tools->addAction("Speedhack...", this, [this]() {
         auto* dlg = new QDialog(this);
         dlg->setWindowTitle("Speedhack");
@@ -241,6 +244,84 @@ void MainWindow::setupMenus() {
             "<p>9,120 lines of code</p>"
             "<p><a href='https://github.com/ts-solidarity/cheat-engine-linux'>GitHub</a></p>");
     });
+}
+
+void MainWindow::showOverlayDialog() {
+    QDialog dialog(this);
+    dialog.setWindowTitle("Overlay");
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* osdCheck = new QCheckBox("OSD text");
+    auto* crosshairCheck = new QCheckBox("Crosshair");
+    auto* showButton = new QPushButton("Show Overlay");
+    auto* hideButton = new QPushButton("Hide Overlay");
+    auto* closeButton = new QPushButton("Close");
+
+    osdCheck->setChecked(!overlayWindow_ || overlayWindow_->osdEnabled());
+    crosshairCheck->setChecked(!overlayWindow_ || overlayWindow_->crosshairEnabled());
+
+    layout->addWidget(osdCheck);
+    layout->addWidget(crosshairCheck);
+    layout->addWidget(showButton);
+    layout->addWidget(hideButton);
+    layout->addWidget(closeButton);
+
+    auto ensureOverlay = [this]() {
+        if (overlayWindow_)
+            return;
+
+        overlayWindow_ = new OverlayWindow;
+        overlayWindow_->setAttribute(Qt::WA_DeleteOnClose);
+        connect(overlayWindow_, &QObject::destroyed, this, [this]() {
+            overlayWindow_ = nullptr;
+        });
+
+        auto* statusTimer = new QTimer(overlayWindow_);
+        connect(statusTimer, &QTimer::timeout, this, &MainWindow::updateOverlayStatus);
+        statusTimer->start(500);
+    };
+
+    connect(showButton, &QPushButton::clicked, this, [this, ensureOverlay, osdCheck, crosshairCheck]() {
+        ensureOverlay();
+        overlayWindow_->setOsdEnabled(osdCheck->isChecked());
+        overlayWindow_->setCrosshairEnabled(crosshairCheck->isChecked());
+        updateOverlayStatus();
+        overlayWindow_->showFullScreen();
+    });
+    connect(hideButton, &QPushButton::clicked, this, [this]() {
+        if (overlayWindow_)
+            overlayWindow_->close();
+    });
+    connect(osdCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (overlayWindow_)
+            overlayWindow_->setOsdEnabled(enabled);
+    });
+    connect(crosshairCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (overlayWindow_)
+            overlayWindow_->setCrosshairEnabled(enabled);
+    });
+    connect(closeButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+    dialog.exec();
+}
+
+void MainWindow::updateOverlayStatus() {
+    if (!overlayWindow_)
+        return;
+
+    int total = 0;
+    int active = 0;
+    for (const auto& entry : addressListModel_->entries()) {
+        if (entry.isGroup)
+            continue;
+        ++total;
+        if (entry.active)
+            ++active;
+    }
+
+    overlayWindow_->setStatusText(QString("%1 | Records %2/%3 active")
+        .arg(processLabel_->text())
+        .arg(active)
+        .arg(total));
 }
 
 void MainWindow::setupUi() {

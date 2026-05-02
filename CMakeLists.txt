@@ -113,6 +113,7 @@ if(Qt6_FOUND)
         gui/heapregions.cpp
         gui/memoryregions.cpp
         gui/modulelist.cpp
+        gui/overlay.cpp
         gui/stackview.cpp
         gui/threadlist.cpp
         gui/settingsdialog.cpp

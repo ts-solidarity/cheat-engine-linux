@@ -252,10 +252,12 @@ Note: generated trainers now redraw a simple terminal UI with `[x]`/`[ ]` enable
 Note: generated trainers now embed table-level Lua and per-entry Lua/auto-assembler script payloads as escaped C string constants, and display script presence in the trainer header.
 
 **3.2 Graphics Overlay (Linux equivalent of D3D hook)**
-- [ ] X11 overlay window (transparent, always-on-top, click-through)
+- [x] X11 overlay window (transparent, always-on-top, click-through)
 - [ ] Vulkan layer injection for in-game overlay
-- [ ] OSD text rendering (FPS counter, cheat status)
-- [ ] Crosshair overlay
+- [x] OSD text rendering (FPS counter, cheat status)
+- [x] Crosshair overlay
+
+Note: the Qt GUI now exposes a transparent always-on-top click-through overlay window with FPS/status OSD text and an optional centered crosshair from Tools -> Overlay.
 
 **3.3 Network/Remote Features**
 - [ ] Connect to ceserver over TCP (for remote/Android targets)
