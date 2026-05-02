@@ -1098,6 +1098,34 @@ static void test_lua_thread_bindings() {
         printf("    error: %s\n", err.c_str());
 }
 
+static void test_lua_custom_type_bindings() {
+    printf("\n── Test: Lua custom type bindings ──\n");
+
+    LuaEngine lua;
+    auto err = lua.execute(
+        "assert(registerCustomTypeLua('u16x10', 2,\n"
+        "  function(bytes)\n"
+        "    local lo, hi = string.byte(bytes, 1, 2)\n"
+        "    return (lo + hi * 256) * 10\n"
+        "  end,\n"
+        "  function(value)\n"
+        "    local raw = math.floor(value / 10)\n"
+        "    return string.char(raw % 256, math.floor(raw / 256) % 256)\n"
+        "  end))\n"
+        "assert(getCustomTypeSize('u16x10') == 2)\n"
+        "assert(getCustomType('u16x10').Name == 'u16x10')\n"
+        "assert(customTypeToValue('u16x10', string.char(0x34, 0x12)) == 0x1234 * 10)\n"
+        "assert(customTypeToValue('u16x10', {0x34, 0x12}) == 0x1234 * 10)\n"
+        "local bytes = customTypeToBytes('u16x10', 0x1234 * 10)\n"
+        "assert(bytes[1] == 0x34 and bytes[2] == 0x12)\n"
+        "assert(unregisterCustomType('u16x10'))\n"
+        "assert(getCustomType('u16x10') == nil)\n");
+
+    printf("  registerCustomTypeLua/customTypeToValue: %s\n", err.empty() ? "OK" : "FAILED");
+    if (!err.empty())
+        printf("    error: %s\n", err.c_str());
+}
+
 static void test_lua_address_list_bindings() {
     printf("\n── Test: Lua address list bindings ──\n");
 
@@ -1917,6 +1945,7 @@ int main(int argc, char* argv[]) {
     test_lua_utility_bindings();
     test_lua_hotkey_bindings();
     test_lua_thread_bindings();
+    test_lua_custom_type_bindings();
     test_lua_address_list_bindings();
     test_lua_debug_bindings();
     test_lua_process_bindings(targetPid);

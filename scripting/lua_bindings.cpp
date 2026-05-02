@@ -1604,6 +1604,155 @@ static int l_queue(lua_State* L) {
     return 1;
 }
 
+// ── Lua-defined custom types ──
+
+static void ensureCustomTypeRegistry(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "ce_custom_types");
+    if (lua_istable(L, -1))
+        return;
+
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "ce_custom_types");
+}
+
+static bool pushCustomType(lua_State* L, const char* name) {
+    ensureCustomTypeRegistry(L);
+    lua_getfield(L, -1, name);
+    lua_remove(L, -2);
+    return lua_istable(L, -1);
+}
+
+static std::string customBytesArg(lua_State* L, int index) {
+    if (lua_isstring(L, index)) {
+        size_t len = 0;
+        const char* bytes = lua_tolstring(L, index, &len);
+        return std::string(bytes, len);
+    }
+
+    luaL_checktype(L, index, LUA_TTABLE);
+    std::string bytes;
+    auto count = lua_rawlen(L, index);
+    bytes.reserve(count);
+    for (size_t i = 1; i <= count; ++i) {
+        lua_rawgeti(L, index, static_cast<int>(i));
+        int value = static_cast<int>(luaL_checkinteger(L, -1));
+        lua_pop(L, 1);
+        luaL_argcheck(L, value >= 0 && value <= 255, index, "byte values must be 0..255");
+        bytes.push_back(static_cast<char>(value));
+    }
+    return bytes;
+}
+
+static int pushByteTableFromString(lua_State* L, const std::string& bytes) {
+    lua_newtable(L);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        lua_pushinteger(L, static_cast<unsigned char>(bytes[i]));
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
+
+static int l_registerCustomTypeLua(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    int byteSize = static_cast<int>(luaL_checkinteger(L, 2));
+    luaL_argcheck(L, byteSize > 0, 2, "byte size must be greater than zero");
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    luaL_checktype(L, 4, LUA_TFUNCTION);
+
+    ensureCustomTypeRegistry(L);
+    lua_newtable(L);
+    lua_pushstring(L, name);
+    lua_setfield(L, -2, "Name");
+    lua_pushinteger(L, byteSize);
+    lua_setfield(L, -2, "ByteSize");
+    lua_pushvalue(L, 3);
+    lua_setfield(L, -2, "BytesToValue");
+    lua_pushvalue(L, 4);
+    lua_setfield(L, -2, "ValueToBytes");
+    lua_setfield(L, -2, name);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_unregisterCustomType(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    ensureCustomTypeRegistry(L);
+    lua_pushnil(L);
+    lua_setfield(L, -2, name);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_getCustomType(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    if (!pushCustomType(L, name)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+static int l_getCustomTypeSize(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    if (!pushCustomType(L, name)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_getfield(L, -1, "ByteSize");
+    lua_remove(L, -2);
+    return 1;
+}
+
+static int l_customTypeToValue(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    auto bytes = customBytesArg(L, 2);
+    if (!pushCustomType(L, name)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        lua_pushstring(L, "unknown custom type");
+        return 2;
+    }
+
+    lua_getfield(L, -1, "BytesToValue");
+    lua_remove(L, -2);
+    lua_pushlstring(L, bytes.data(), bytes.size());
+    if (lua_pcall(L, 1, 1, 0) != LUA_OK)
+        return lua_error(L);
+    return 1;
+}
+
+static int l_customTypeToBytes(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    if (!pushCustomType(L, name)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        lua_pushstring(L, "unknown custom type");
+        return 2;
+    }
+
+    lua_getfield(L, -1, "ValueToBytes");
+    lua_remove(L, -2);
+    lua_pushvalue(L, 2);
+    if (lua_pcall(L, 1, 1, 0) != LUA_OK)
+        return lua_error(L);
+
+    if (lua_isstring(L, -1)) {
+        size_t len = 0;
+        const char* bytes = lua_tolstring(L, -1, &len);
+        std::string copy(bytes, len);
+        lua_pop(L, 1);
+        return pushByteTableFromString(L, copy);
+    }
+
+    luaL_checktype(L, -1, LUA_TTABLE);
+    return 1;
+}
+
 // ── Constants registration ──
 
 static void registerConstants(lua_State* L) {
@@ -1790,6 +1939,15 @@ void registerExtendedBindings(lua_State* L) {
     lua_register(L, "createThread", l_createThread);
     lua_register(L, "synchronize", l_synchronize);
     lua_register(L, "queue", l_queue);
+
+    // Custom value types
+    lua_register(L, "registerCustomTypeLua", l_registerCustomTypeLua);
+    lua_register(L, "registerCustomType", l_registerCustomTypeLua);
+    lua_register(L, "unregisterCustomType", l_unregisterCustomType);
+    lua_register(L, "getCustomType", l_getCustomType);
+    lua_register(L, "getCustomTypeSize", l_getCustomTypeSize);
+    lua_register(L, "customTypeToValue", l_customTypeToValue);
+    lua_register(L, "customTypeToBytes", l_customTypeToBytes);
 
     // File regions
     lua_register(L, "readRegionFromFile", l_readRegionFromFile);

@@ -96,7 +96,7 @@ Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field of
 - [x] Dropdown list for address entries (predefined value choices)
 - [x] Parent-child hierarchy (tree structure in address list)
 - [x] Color coding per entry
-- [ ] Custom type support (Lua-defined value interpreters)
+- [x] Custom type support (Lua-defined value interpreters)
 - [x] Description editing inline
 - [x] Copy/paste address entries
 
@@ -219,6 +219,8 @@ Note: .CT XML now writes CE-style textual variable types such as `4 Bytes`, `Flo
 Note: the register editor now includes a read-only floating-point/SIMD panel populated from Linux `PTRACE_GETREGSET` xstate data, showing XMM low 128-bit values and YMM high 128-bit values when the target exposes AVX state.
 
 Note: `.CETRAINER` save/load now supports a lightweight password-protected payload wrapper around the native JSON table format, with encrypted bytes, password verification, and wrong-password regression coverage.
+
+Note: Lua-defined custom value types can now be registered with `registerCustomTypeLua`/`registerCustomType`, queried by name, converted from raw bytes to script values, and converted back to byte tables for write-back.
 
 ### Tier 3 — Nice to Have (~4K lines, 2-3 weeks)
 
