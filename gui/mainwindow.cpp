@@ -47,6 +47,7 @@
 #include <QJsonArray>
 #include <QStringList>
 #include <QMap>
+#include <cmath>
 #include <cstring>
 
 namespace ce::gui {
@@ -436,6 +437,9 @@ void MainWindow::setupUi() {
     });
     addressListView_ = new QTableView;
     addressListView_->setModel(addressListModel_);
+    connect(addressListModel_, &QAbstractItemModel::modelReset, this, &MainWindow::rebuildValueHotkeys);
+    connect(addressListModel_, &QAbstractItemModel::rowsInserted, this, &MainWindow::rebuildValueHotkeys);
+    connect(addressListModel_, &QAbstractItemModel::rowsRemoved, this, &MainWindow::rebuildValueHotkeys);
     addressListView_->setSelectionBehavior(QAbstractItemView::SelectRows);
     addressListView_->setFont(QFont("Monospace", 9));
     addressListView_->verticalHeader()->setVisible(false);
@@ -525,6 +529,40 @@ void MainWindow::setupUi() {
                     if (dialog.exec() == QDialog::Accepted) {
                         addressListModel_->setHotkeyKeys(row,
                             editor->keySequence().toString(QKeySequence::PortableText));
+                    }
+                });
+                menu.addAction("Configure Value Hotkeys...", [this, selected]() {
+                    int row = selected.first().row();
+                    const auto& entries = addressListModel_->entries();
+                    if (row < 0 || row >= (int)entries.size()) return;
+
+                    QDialog dialog(this);
+                    dialog.setWindowTitle("Configure Value Hotkeys");
+                    auto* layout = new QGridLayout(&dialog);
+                    auto* label = new QLabel(entries[row].description, &dialog);
+                    auto* increaseEditor = new QKeySequenceEdit(QKeySequence(entries[row].increaseHotkeyKeys), &dialog);
+                    auto* decreaseEditor = new QKeySequenceEdit(QKeySequence(entries[row].decreaseHotkeyKeys), &dialog);
+                    auto* stepEdit = new QLineEdit(entries[row].hotkeyStep, &dialog);
+                    stepEdit->setValidator(new QDoubleValidator(stepEdit));
+                    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+
+                    layout->addWidget(label, 0, 0, 1, 2);
+                    layout->addWidget(new QLabel("Increase", &dialog), 1, 0);
+                    layout->addWidget(increaseEditor, 1, 1);
+                    layout->addWidget(new QLabel("Decrease", &dialog), 2, 0);
+                    layout->addWidget(decreaseEditor, 2, 1);
+                    layout->addWidget(new QLabel("Step", &dialog), 3, 0);
+                    layout->addWidget(stepEdit, 3, 1);
+                    layout->addWidget(buttons, 4, 0, 1, 2);
+                    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+                    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+                    if (dialog.exec() == QDialog::Accepted) {
+                        addressListModel_->setValueHotkeys(row,
+                            increaseEditor->keySequence().toString(QKeySequence::PortableText),
+                            decreaseEditor->keySequence().toString(QKeySequence::PortableText),
+                            stepEdit->text().isEmpty() ? "1" : stepEdit->text());
+                        rebuildValueHotkeys();
                     }
                 });
             }
@@ -873,6 +911,41 @@ void MainWindow::onFreezeTimer() {
         addressListModel_->freezeWrite(process_.get());
 }
 
+void MainWindow::rebuildValueHotkeys() {
+    for (auto* shortcut : valueHotkeyShortcuts_)
+        shortcut->deleteLater();
+    valueHotkeyShortcuts_.clear();
+
+    const auto& entries = addressListModel_->entries();
+    for (int row = 0; row < (int)entries.size(); ++row) {
+        const auto& entry = entries[row];
+        if (entry.isGroup)
+            continue;
+
+        bool ok = false;
+        double step = entry.hotkeyStep.toDouble(&ok);
+        if (!ok || step == 0.0)
+            step = 1.0;
+
+        auto addShortcut = [&](const QString& keys, double direction) {
+            QKeySequence sequence(keys);
+            if (sequence.isEmpty())
+                return;
+
+            auto* shortcut = new QShortcut(sequence, this);
+            shortcut->setContext(Qt::ApplicationShortcut);
+            connect(shortcut, &QShortcut::activated, this, [this, row, step, direction]() {
+                if (!addressListModel_->adjustEntryValue(row, step * direction))
+                    QApplication::beep();
+            });
+            valueHotkeyShortcuts_.push_back(shortcut);
+        };
+
+        addShortcut(entry.increaseHotkeyKeys, 1.0);
+        addShortcut(entry.decreaseHotkeyKeys, -1.0);
+    }
+}
+
 void MainWindow::onSaveTable() {
     auto path = QFileDialog::getSaveFileName(this, "Save Cheat Table", "",
         "Cheat Tables (*.ct);;JSON Tables (*.json);;All Files (*)");
@@ -904,6 +977,9 @@ void MainWindow::onSaveTable() {
             e.color = obj["color"].toString().toStdString();
             e.dropdownList = obj["dropdown"].toString().toStdString();
             e.hotkeyKeys = obj["hotkeys"].toString().toStdString();
+            e.increaseHotkeyKeys = obj["increaseHotkey"].toString().toStdString();
+            e.decreaseHotkeyKeys = obj["decreaseHotkey"].toString().toStdString();
+            e.hotkeyStep = obj["hotkeyStep"].toString().toStdString();
             e.isGroup = obj["group"].toBool();
             e.parentId = obj["parent"].toInt(-1);
             table.entries.push_back(e);
@@ -941,6 +1017,9 @@ void MainWindow::onLoadTable() {
             obj["color"] = QString::fromStdString(e.color);
             obj["dropdown"] = QString::fromStdString(e.dropdownList);
             obj["hotkeys"] = QString::fromStdString(e.hotkeyKeys);
+            obj["increaseHotkey"] = QString::fromStdString(e.increaseHotkeyKeys);
+            obj["decreaseHotkey"] = QString::fromStdString(e.decreaseHotkeyKeys);
+            obj["hotkeyStep"] = QString::fromStdString(e.hotkeyStep);
             obj["group"] = e.isGroup;
             obj["parent"] = e.parentId;
             arr.append(obj);
@@ -1359,6 +1438,9 @@ QJsonArray AddressListModel::toJson() const {
         obj["color"] = e.color;
         obj["dropdown"] = e.dropdownList;
         obj["hotkeys"] = e.hotkeyKeys;
+        obj["increaseHotkey"] = e.increaseHotkeyKeys;
+        obj["decreaseHotkey"] = e.decreaseHotkeyKeys;
+        obj["hotkeyStep"] = e.hotkeyStep;
         obj["indent"] = e.indent;
         obj["group"] = e.isGroup;
         if (e.indent > 0 && e.indent - 1 < (int)lastRowAtIndent.size())
@@ -1390,6 +1472,9 @@ void AddressListModel::fromJson(const QJsonArray& arr) {
         e.color = obj["color"].toString();
         e.dropdownList = obj["dropdown"].toString();
         e.hotkeyKeys = obj["hotkeys"].toString();
+        e.increaseHotkeyKeys = obj["increaseHotkey"].toString();
+        e.decreaseHotkeyKeys = obj["decreaseHotkey"].toString();
+        e.hotkeyStep = obj["hotkeyStep"].toString("1");
         e.indent = std::max(0, obj.contains("indent")
             ? obj["indent"].toInt()
             : (obj["parent"].toInt(-1) >= 0 && obj["parent"].toInt(-1) < (int)parentIndentById.size()
@@ -1418,6 +1503,54 @@ void AddressListModel::setHotkeyKeys(int row, const QString& keys) {
     if (row < 0 || row >= (int)entries_.size()) return;
     entries_[row].hotkeyKeys = keys;
     emit dataChanged(index(row, 0), index(row, columnCount() - 1));
+}
+
+void AddressListModel::setValueHotkeys(int row, const QString& increaseKeys, const QString& decreaseKeys, const QString& step) {
+    if (row < 0 || row >= (int)entries_.size()) return;
+    entries_[row].increaseHotkeyKeys = increaseKeys;
+    entries_[row].decreaseHotkeyKeys = decreaseKeys;
+    entries_[row].hotkeyStep = step.isEmpty() ? "1" : step;
+    emit dataChanged(index(row, 0), index(row, columnCount() - 1));
+}
+
+bool AddressListModel::adjustEntryValue(int row, double delta) {
+    if (row < 0 || row >= (int)entries_.size() || !proc_) return false;
+    auto& e = entries_[row];
+    if (e.isGroup) return false;
+
+    double current = 0;
+    if (!readComparableValue(proc_, e.address, e.type, current) &&
+        !parseComparableValue(e.type, e.currentValue, current)) {
+        return false;
+    }
+
+    double next = current + delta;
+    QString nextText;
+    switch (e.type) {
+        case ValueType::Byte:
+        case ValueType::Int16:
+        case ValueType::Int32:
+        case ValueType::Int64:
+            nextText = QString::number(static_cast<qlonglong>(std::llround(next)));
+            break;
+        case ValueType::Pointer:
+            nextText = QString("0x%1").arg(static_cast<qulonglong>(std::llround(next)), 0, 16);
+            break;
+        case ValueType::Float:
+            nextText = QString::number(next, 'f', 4);
+            break;
+        case ValueType::Double:
+            nextText = QString::number(next, 'f', 6);
+            break;
+        default:
+            return false;
+    }
+
+    writeValueToProcess(proc_, e.address, e.type, nextText);
+    e.currentValue = nextText;
+    if (e.active) e.frozenValue = nextText;
+    emit dataChanged(index(row, 4), index(row, 4), {Qt::DisplayRole, Qt::EditRole});
+    return true;
 }
 
 void AddressListModel::indentRows(QList<int> rows) {

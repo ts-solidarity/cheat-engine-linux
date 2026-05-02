@@ -23,6 +23,9 @@ struct CheatEntry {
     std::string color;          // Hex color for display
     std::string dropdownList;   // Semicolon-separated choices
     std::string hotkeyKeys;     // Hotkey binding
+    std::string increaseHotkeyKeys;
+    std::string decreaseHotkeyKeys;
+    std::string hotkeyStep;
 };
 
 struct StructureField {

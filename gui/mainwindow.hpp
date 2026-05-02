@@ -19,6 +19,7 @@
 #include <QGroupBox>
 #include <QProgressBar>
 #include <QSlider>
+#include <QShortcut>
 #include <functional>
 
 namespace ce::gui {
@@ -51,6 +52,7 @@ private:
     void loadAddressEntries(const QJsonArray& entries);
     void updateScanButtons();
     void startCodeFinder(int row, bool writesOnly);
+    void rebuildValueHotkeys();
 
     // Process
     std::unique_ptr<os::LinuxProcessHandle> process_;
@@ -102,6 +104,7 @@ private:
     // Bottom panel — address list
     QTableView* addressListView_;
     AddressListModel* addressListModel_;
+    std::vector<QShortcut*> valueHotkeyShortcuts_;
 };
 
 // ── Models ──
@@ -139,6 +142,9 @@ struct AddressEntry {
     QString color;            // Hex color for display
     QString dropdownList;     // "value:label;value:label" choices
     QString hotkeyKeys;       // Portable key sequence string
+    QString increaseHotkeyKeys;
+    QString decreaseHotkeyKeys;
+    QString hotkeyStep = "1";
     int indent = 0;           // Nesting level (0 = root, 1 = child, etc.)
     bool isGroup = false;     // Group header (no address, just a label)
 };
@@ -155,6 +161,8 @@ public:
     void outdentRows(QList<int> rows);
     void setFreezeMode(int row, ce::FreezeMode mode);
     void setHotkeyKeys(int row, const QString& keys);
+    void setValueHotkeys(int row, const QString& increaseKeys, const QString& decreaseKeys, const QString& step);
+    bool adjustEntryValue(int row, double delta);
     const std::vector<AddressEntry>& entries() const { return entries_; }
     void setProcess(ce::ProcessHandle* proc) { proc_ = proc; }
     void setAutoAssembler(ce::AutoAssembler* autoAsm) { autoAsm_ = autoAsm; }

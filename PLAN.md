@@ -92,13 +92,15 @@ Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field of
 **1.4 Memory Records (Address List)**
 - [x] Freeze direction: increase only, decrease only, never decrease, never increase
 - [x] Auto-inject on enable (run auto-assembler script when checkbox toggled)
-- [ ] Value increase/decrease by hotkey
+- [x] Value increase/decrease by hotkey
 - [x] Dropdown list for address entries (predefined value choices)
 - [x] Parent-child hierarchy (tree structure in address list)
 - [x] Color coding per entry
 - [x] Custom type support (Lua-defined value interpreters)
 - [x] Description editing inline
 - [x] Copy/paste address entries
+
+Note: address-list entries now support separate increase/decrease value hotkeys with configurable step sizes, persisted through JSON, `.CT`, and protected `.CETRAINER` table paths.
 
 **1.5 Cheat Table Format (.CT)**
 - [x] XML-based save/load (matching CE's format for compatibility)

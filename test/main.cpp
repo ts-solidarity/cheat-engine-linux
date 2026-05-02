@@ -107,6 +107,9 @@ static void test_cheat_table_json() {
     entry.color = "FF00AA";
     entry.dropdownList = "0:Off;1:On";
     entry.hotkeyKeys = "Ctrl+H";
+    entry.increaseHotkeyKeys = "Ctrl+Up";
+    entry.decreaseHotkeyKeys = "Ctrl+Down";
+    entry.hotkeyStep = "5";
     table.entries.push_back(entry);
 
     StructureDefinition structure;
@@ -162,7 +165,10 @@ static void test_cheat_table_json() {
             loaded.entries[0].luaScript == entry.luaScript &&
             loaded.entries[0].color == entry.color &&
             loaded.entries[0].dropdownList == entry.dropdownList &&
-            loaded.entries[0].hotkeyKeys == entry.hotkeyKeys;
+            loaded.entries[0].hotkeyKeys == entry.hotkeyKeys &&
+            loaded.entries[0].increaseHotkeyKeys == entry.increaseHotkeyKeys &&
+            loaded.entries[0].decreaseHotkeyKeys == entry.decreaseHotkeyKeys &&
+            loaded.entries[0].hotkeyStep == entry.hotkeyStep;
     };
 
     CheatTable jsonLoaded;

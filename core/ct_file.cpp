@@ -212,6 +212,12 @@ bool CheatTable::save(const std::string& path) const {
 
         if (!e.hotkeyKeys.empty())
             f << "      <Hotkeys>" << xmlEscape(e.hotkeyKeys) << "</Hotkeys>\n";
+        if (!e.increaseHotkeyKeys.empty())
+            f << "      <IncreaseHotkey>" << xmlEscape(e.increaseHotkeyKeys) << "</IncreaseHotkey>\n";
+        if (!e.decreaseHotkeyKeys.empty())
+            f << "      <DecreaseHotkey>" << xmlEscape(e.decreaseHotkeyKeys) << "</DecreaseHotkey>\n";
+        if (!e.hotkeyStep.empty())
+            f << "      <HotkeyStep>" << xmlEscape(e.hotkeyStep) << "</HotkeyStep>\n";
 
         f << "    </CheatEntry>\n";
     }
@@ -597,6 +603,9 @@ bool CheatTable::load(const std::string& path) {
         e.color = getTag(entryXml, "Color");
         e.dropdownList = xmlUnescape(getTag(entryXml, "DropdownList"));
         e.hotkeyKeys = xmlUnescape(getTag(entryXml, "Hotkeys"));
+        e.increaseHotkeyKeys = xmlUnescape(getTag(entryXml, "IncreaseHotkey"));
+        e.decreaseHotkeyKeys = xmlUnescape(getTag(entryXml, "DecreaseHotkey"));
+        e.hotkeyStep = xmlUnescape(getTag(entryXml, "HotkeyStep"));
 
         entries.push_back(std::move(e));
         pos = entryEnd + 13;
@@ -658,6 +667,9 @@ bool CheatTable::saveJson(const std::string& path) const {
         if (!e.color.empty()) f << ",\"color\":\"" << jsonEscape(e.color) << "\"";
         if (!e.dropdownList.empty()) f << ",\"dropdown\":\"" << jsonEscape(e.dropdownList) << "\"";
         if (!e.hotkeyKeys.empty()) f << ",\"hotkeys\":\"" << jsonEscape(e.hotkeyKeys) << "\"";
+        if (!e.increaseHotkeyKeys.empty()) f << ",\"increaseHotkey\":\"" << jsonEscape(e.increaseHotkeyKeys) << "\"";
+        if (!e.decreaseHotkeyKeys.empty()) f << ",\"decreaseHotkey\":\"" << jsonEscape(e.decreaseHotkeyKeys) << "\"";
+        if (!e.hotkeyStep.empty()) f << ",\"hotkeyStep\":\"" << jsonEscape(e.hotkeyStep) << "\"";
         if (e.parentId >= 0) f << ",\"parent\":" << e.parentId;
         f << "}";
         if (i + 1 < entries.size()) f << ",";
@@ -732,6 +744,9 @@ bool CheatTable::loadJson(const std::string& path) {
         e.color = jsonStringField(item, "color");
         e.dropdownList = jsonStringField(item, "dropdown");
         e.hotkeyKeys = jsonStringField(item, "hotkeys");
+        e.increaseHotkeyKeys = jsonStringField(item, "increaseHotkey");
+        e.decreaseHotkeyKeys = jsonStringField(item, "decreaseHotkey");
+        e.hotkeyStep = jsonStringField(item, "hotkeyStep");
         e.parentId = jsonIntField(item, "parent", -1);
         entries.push_back(std::move(e));
     }
