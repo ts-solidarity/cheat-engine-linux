@@ -266,10 +266,12 @@ Note: the Qt GUI now exposes a transparent always-on-top click-through overlay w
 - [ ] Network data compression
 
 **3.4 Mono/.NET Support**
-- [ ] CoreCLR/Mono runtime detection in target
+- [x] CoreCLR/Mono runtime detection in target
 - [ ] Managed object enumeration
 - [ ] .NET type information extraction
 - [ ] Managed method breakpoints
+
+Note: process module inspection now detects Mono and CoreCLR runtimes from mapped runtime libraries, with regression coverage for mixed managed/native module lists.
 
 **3.5 Kernel Module (optional)**
 - [ ] Linux kernel module for privileged operations

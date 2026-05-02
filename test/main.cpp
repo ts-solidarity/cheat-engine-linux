@@ -4,6 +4,7 @@
 #include "core/ct_file.hpp"
 #include "core/trainer.hpp"
 #include "analysis/code_analysis.hpp"
+#include "analysis/managed_runtime.hpp"
 #include "analysis/structure_tools.hpp"
 #include "debug/breakpoint_manager.hpp"
 #include "debug/stack_trace.hpp"
@@ -313,6 +314,36 @@ static void test_code_analysis_references() {
     printf("  RIP-relative instructions: %s\n", ripOk ? "OK" : "FAILED");
     printf("  Assembly pattern scan: %s\n", assemblyOk ? "OK" : "FAILED");
     printf("  Code caves: %s\n", cavesOk ? "OK" : "FAILED");
+}
+
+static void test_managed_runtime_detection() {
+    printf("\n── Test: Managed runtime detection ──\n");
+
+    FakeProcessHandle proc({}, {
+        {0x100000, 0x20000, "libmonosgen-2.0.so", "/usr/lib/libmonosgen-2.0.so", true},
+        {0x200000, 0x30000, "libclrjit.so", "/opt/dotnet/shared/Microsoft.NETCore.App/libclrjit.so", true},
+        {0x300000, 0x10000, "libnative.so", "/tmp/libnative.so", true},
+    });
+    auto runtimes = detectManagedRuntimes(proc);
+
+    FakeProcessHandle nativeOnly({}, {
+        {0x400000, 0x10000, "libc.so.6", "/usr/lib/libc.so.6", true},
+    });
+    auto none = detectManagedRuntimes(nativeOnly);
+
+    bool monoOk = std::any_of(runtimes.begin(), runtimes.end(), [](const ManagedRuntimeInfo& info) {
+        return info.kind == ManagedRuntimeKind::Mono &&
+            info.name == "Mono" &&
+            info.moduleName == "libmonosgen-2.0.so";
+    });
+    bool coreClrOk = std::any_of(runtimes.begin(), runtimes.end(), [](const ManagedRuntimeInfo& info) {
+        return info.kind == ManagedRuntimeKind::CoreCLR &&
+            info.name == "CoreCLR" &&
+            info.moduleName == "libclrjit.so";
+    });
+
+    printf("  Mono/CoreCLR modules: %s\n",
+        (monoOk && coreClrOk && none.empty()) ? "OK" : "FAILED");
 }
 
 static void test_stack_trace_frame_walk() {
@@ -2122,6 +2153,7 @@ int main(int argc, char* argv[]) {
     test_cheat_table_json();
     test_trainer_generation();
     test_code_analysis_references();
+    test_managed_runtime_detection();
     test_stack_trace_frame_walk();
     test_break_and_trace();
     test_exception_breakpoint();
