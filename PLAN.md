@@ -61,8 +61,8 @@
 - [x] Floating point register panel (XMM/YMM)
 
 **1.3 Complete Auto-Assembler**
-- [ ] `createthread(address)` — remote thread creation via ptrace
-- [ ] `createthreadandwait(address, timeout)`
+- [x] `createthread(address)` — remote thread creation via ptrace
+- [x] `createthreadandwait(address, timeout)`
 - [x] `include(file.cea)` — script inclusion
 - [x] `reassemble(address)` — disassemble + reassemble for relocation
 - [x] `struct name ... ends` — structure definitions with size calculation
@@ -90,6 +90,8 @@ Note: auto-assembler preprocessor and postprocessor hooks now transform the extr
 Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field offsets and struct sizes, exposing both `struct.field` and plain field names as script symbols.
 
 Note: auto-assembler forward labels now resolve through a bounded multi-pass sizing step before injection, so jumps over later NOP/data padding assemble with stable target addresses.
+
+Note: auto-assembler `createthread` and `createthreadandwait` now execute injected entry points through ptrace-driven remote `pthread_create`, using `pthread_tryjoin_np` for timeout-aware waits and detaching async workers.
 
 **1.4 Memory Records (Address List)**
 - [x] Freeze direction: increase only, decrease only, never decrease, never increase

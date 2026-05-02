@@ -580,6 +580,63 @@ static void test_autoassembler_forward_labels(pid_t pid) {
     printf("  forward label sizing: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_create_thread(pid_t pid) {
+    printf("\n── Test: AutoAssembler createthread ──\n");
+
+    LinuxProcessHandle proc(pid);
+
+    AutoAssembler waitedAssembler;
+    auto waited = waitedAssembler.execute(proc,
+        "[ENABLE]\n"
+        "alloc(waitcode, 512)\n"
+        "alloc(waitresult, 8)\n"
+        "registersymbol(waitresult)\n"
+        "waitresult:\n"
+        "dd 0\n"
+        "waitcode:\n"
+        "mov rax, waitresult\n"
+        "mov dword [rax], 0x11223344\n"
+        "xor eax, eax\n"
+        "ret\n"
+        "createthreadandwait(waitcode, 2000)\n");
+
+    uint32_t waitedValue = 0;
+    auto waitResultAddr = waitedAssembler.resolveSymbol("waitresult");
+    if (waitResultAddr)
+        proc.read(waitResultAddr, &waitedValue, sizeof(waitedValue));
+
+    AutoAssembler asyncAssembler;
+    auto async = asyncAssembler.execute(proc,
+        "[ENABLE]\n"
+        "alloc(asynccode, 512)\n"
+        "alloc(asyncresult, 8)\n"
+        "registersymbol(asyncresult)\n"
+        "asyncresult:\n"
+        "dd 0\n"
+        "asynccode:\n"
+        "mov rax, asyncresult\n"
+        "mov dword [rax], 0x55667788\n"
+        "xor eax, eax\n"
+        "ret\n"
+        "createthread(asynccode)\n");
+
+    uint32_t asyncValue = 0;
+    auto asyncResultAddr = asyncAssembler.resolveSymbol("asyncresult");
+    for (int i = 0; i < 100 && asyncResultAddr; ++i) {
+        proc.read(asyncResultAddr, &asyncValue, sizeof(asyncValue));
+        if (asyncValue == 0x55667788)
+            break;
+        usleep(10000);
+    }
+
+    bool ok = waited.success && waitedValue == 0x11223344 &&
+        async.success && asyncValue == 0x55667788;
+
+    waitedAssembler.disable(proc, "", waited.disableInfo);
+    asyncAssembler.disable(proc, "", async.disableInfo);
+    printf("  createthread/andwait: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_ds(pid_t pid) {
     printf("\n── Test: AutoAssembler ds ──\n");
 
@@ -1969,6 +2026,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_nop_fillmem(targetPid);
     test_autoassembler_forward_labels(targetPid);
+    test_autoassembler_create_thread(targetPid);
     test_autoassembler_ds(targetPid);
     test_autoassembler_custom_commands(targetPid);
     test_autoassembler_processing_hooks(targetPid);

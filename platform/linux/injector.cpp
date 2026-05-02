@@ -4,8 +4,11 @@
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <sys/syscall.h>
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cerrno>
+#include <thread>
 
 namespace ce::os {
 
@@ -55,7 +58,9 @@ static int64_t remoteSyscall(pid_t pid, uint64_t nr,
 }
 
 // Call a function in the target process
-static uint64_t remoteCall(pid_t pid, uintptr_t funcAddr, uintptr_t arg1) {
+static uint64_t remoteCall(pid_t pid, uintptr_t funcAddr,
+    uintptr_t arg1 = 0, uintptr_t arg2 = 0, uintptr_t arg3 = 0,
+    uintptr_t arg4 = 0, uintptr_t arg5 = 0, uintptr_t arg6 = 0) {
     struct user_regs_struct oldRegs, regs;
 
     if (ptrace(PTRACE_GETREGS, pid, nullptr, &oldRegs) < 0)
@@ -64,7 +69,11 @@ static uint64_t remoteCall(pid_t pid, uintptr_t funcAddr, uintptr_t arg1) {
     regs = oldRegs;
     regs.rip = funcAddr;
     regs.rdi = arg1;
-    regs.rsi = 1; // RTLD_LAZY
+    regs.rsi = arg2;
+    regs.rdx = arg3;
+    regs.rcx = arg4;
+    regs.r8 = arg5;
+    regs.r9 = arg6;
     regs.rsp -= 128; // Red zone
     regs.rsp &= ~0xFULL; // Align
 
@@ -126,7 +135,7 @@ injectLibrary(ProcessHandle& proc, SymbolResolver& resolver, const std::string& 
     }
 
     // Call dlopen(path, RTLD_LAZY)
-    uint64_t handle = remoteCall(pid, dlopenAddr, remoteMem);
+    uint64_t handle = remoteCall(pid, dlopenAddr, remoteMem, 1 /*RTLD_LAZY*/);
 
     // Free the path memory
     remoteSyscall(pid, NR_MUNMAP, remoteMem, allocSize, 0, 0, 0, 0);
@@ -138,6 +147,84 @@ injectLibrary(ProcessHandle& proc, SymbolResolver& resolver, const std::string& 
         return std::unexpected("dlopen returned NULL in target process");
 
     return (uintptr_t)handle;
+}
+
+std::expected<RemoteThreadInfo, std::string>
+createRemoteThread(ProcessHandle& proc, SymbolResolver& resolver, uintptr_t entryPoint,
+                   bool waitForCompletion, int timeoutMs) {
+    if (!entryPoint)
+        return std::unexpected("remote thread entry point is null");
+
+    uintptr_t pthreadCreate = resolver.lookup("pthread_create");
+    if (!pthreadCreate) pthreadCreate = resolver.lookup("__pthread_create");
+    if (!pthreadCreate)
+        return std::unexpected("pthread_create not found in target process symbols");
+
+    uintptr_t pthreadJoin = resolver.lookup("pthread_join");
+    uintptr_t pthreadTryJoin = resolver.lookup("pthread_tryjoin_np");
+    uintptr_t pthreadDetach = resolver.lookup("pthread_detach");
+
+    auto handleStorage = proc.allocate(sizeof(uintptr_t), MemProt::ReadWrite);
+    if (!handleStorage)
+        return std::unexpected("failed to allocate remote pthread handle storage: " +
+            handleStorage.error().message());
+
+    pid_t pid = proc.pid();
+
+    if (ptrace(PTRACE_ATTACH, pid, nullptr, nullptr) < 0) {
+        proc.free(*handleStorage, sizeof(uintptr_t));
+        return std::unexpected(std::string("ptrace attach failed: ") + strerror(errno));
+    }
+
+    int status;
+    waitpid(pid, &status, 0);
+
+    uint64_t createResult = remoteCall(pid, pthreadCreate, *handleStorage, 0, entryPoint, 0);
+    if (createResult != 0) {
+        ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
+        proc.free(*handleStorage, sizeof(uintptr_t));
+        return std::unexpected("pthread_create failed with code " + std::to_string(createResult));
+    }
+
+    uintptr_t threadHandle = 0;
+    proc.read(*handleStorage, &threadHandle, sizeof(threadHandle));
+    if (!threadHandle) {
+        ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
+        proc.free(*handleStorage, sizeof(uintptr_t));
+        return std::unexpected("pthread_create returned an empty thread handle");
+    }
+
+    RemoteThreadInfo info;
+    info.handle = threadHandle;
+
+    if (waitForCompletion) {
+        bool completed = false;
+        auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(std::max(timeoutMs, 0));
+
+        if (pthreadTryJoin) {
+            do {
+                uint64_t joinResult = remoteCall(pid, pthreadTryJoin, threadHandle, 0);
+                if (joinResult == 0) {
+                    completed = true;
+                    break;
+                }
+                if (joinResult != EBUSY)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            } while (std::chrono::steady_clock::now() < deadline);
+        } else if (pthreadJoin) {
+            completed = remoteCall(pid, pthreadJoin, threadHandle, 0) == 0;
+        }
+
+        info.completed = completed;
+    } else if (pthreadDetach) {
+        remoteCall(pid, pthreadDetach, threadHandle);
+    }
+
+    ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
+    proc.free(*handleStorage, sizeof(uintptr_t));
+    return info;
 }
 
 } // namespace ce::os

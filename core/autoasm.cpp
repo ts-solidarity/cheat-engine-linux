@@ -1165,6 +1165,12 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
     // ── Phase 3: Assemble and inject ──
     uintptr_t currentAddr = 0;
     std::string currentLabel;
+    struct DeferredThread {
+        std::string addressExpr;
+        bool wait = false;
+        int timeoutMs = 5000;
+    };
+    std::vector<DeferredThread> deferredThreads;
 
     for (auto& rawLine : asmLines) {
         auto trimmedLine = trim(rawLine);
@@ -1335,8 +1341,29 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             continue;
         }
 
-        if (startsWith(trimmedLine, "__CREATETHREAD__:") || startsWith(trimmedLine, "__CREATETHREADANDWAIT__:")) {
-            // Defer to after all writes — store address expression for later
+        if (startsWith(trimmedLine, "__CREATETHREAD__:")) {
+            deferredThreads.push_back({trim(trimmedLine.substr(17)), false, 0});
+            result.log.push_back("Deferred: " + trimmedLine);
+            continue;
+        }
+        if (startsWith(trimmedLine, "__CREATETHREADANDWAIT__:")) {
+            auto args = trimmedLine.substr(24);
+            auto parts = splitArgs(args, 2);
+            if (parts.empty() || parts[0].empty()) {
+                result.error = "CREATETHREADANDWAIT requires an address";
+                return result;
+            }
+
+            int timeoutMs = 5000;
+            if (parts.size() > 1 && !parts[1].empty()) {
+                try {
+                    timeoutMs = std::stoi(parts[1], nullptr, 0);
+                } catch (...) {
+                    result.error = "Invalid CREATETHREADANDWAIT timeout: " + parts[1];
+                    return result;
+                }
+            }
+            deferredThreads.push_back({trim(parts[0]), true, timeoutMs});
             result.log.push_back("Deferred: " + trimmedLine);
             continue;
         }
@@ -1576,6 +1603,38 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             // Write new bytes
             proc.write(currentAddr, bytes.data(), bytes.size());
             currentAddr += bytes.size();
+        }
+    }
+
+    if (!deferredThreads.empty()) {
+        SymbolResolver resolver;
+        resolver.loadProcess(proc);
+
+        for (const auto& thread : deferredThreads) {
+            auto addr = resolveAddress(thread.addressExpr, allocs, labels, defines);
+            if (!addr) {
+                result.error = "Invalid CREATETHREAD target: " + thread.addressExpr;
+                return result;
+            }
+
+            auto threadResult = os::createRemoteThread(proc, resolver, addr, thread.wait, thread.timeoutMs);
+            if (!threadResult) {
+                result.error = "CREATETHREAD failed for " + thread.addressExpr + ": " + threadResult.error();
+                return result;
+            }
+
+            auto info = *threadResult;
+            if (info.stackAddress)
+                result.disableInfo.allocs.push_back({
+                    "__threadstack_" + std::to_string(info.tid), info.stackAddress, info.stackSize});
+
+            result.log.push_back(std::string(thread.wait ? "CREATETHREADANDWAIT" : "CREATETHREAD") +
+                ": " + thread.addressExpr + " handle=0x" + formatHex(info.handle));
+
+            if (thread.wait && !info.completed) {
+                result.error = "CREATETHREADANDWAIT timed out for " + thread.addressExpr;
+                return result;
+            }
         }
     }
 
