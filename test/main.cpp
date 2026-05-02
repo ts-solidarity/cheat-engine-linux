@@ -1,5 +1,6 @@
 #include "platform/linux/linux_process.hpp"
 #include "platform/linux/ptrace_wrapper.hpp"
+#include "platform/linux/ceserver_client.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
 #include "core/trainer.hpp"
@@ -435,6 +436,63 @@ static void test_gdb_remote_client() {
         mem && *mem == std::vector<uint8_t>({0x11, 0x22, 0x33, 0x44}) &&
         serverOk;
     printf("  packet exchange: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_ceserver_client() {
+    printf("\n── Test: ceserver TCP client ──\n");
+
+    int server = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    bool setupOk = server >= 0 &&
+        ::bind(server, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
+        ::listen(server, 1) == 0;
+    socklen_t addrLen = sizeof(addr);
+    if (setupOk)
+        setupOk = ::getsockname(server, reinterpret_cast<sockaddr*>(&addr), &addrLen) == 0;
+
+    if (!setupOk) {
+        if (server >= 0) ::close(server);
+        printf("  version handshake: FAILED\n");
+        return;
+    }
+
+    bool serverOk = false;
+    std::thread stub([&]() {
+        int client = ::accept(server, nullptr, nullptr);
+        if (client < 0)
+            return;
+
+        uint8_t command = 0xff;
+        ::recv(client, &command, sizeof(command), MSG_WAITALL);
+        int32_t protocol = 6;
+        const std::string version = "CHEATENGINE Network 2.3";
+        uint8_t size = static_cast<uint8_t>(version.size());
+        ::send(client, &protocol, sizeof(protocol), 0);
+        ::send(client, &size, sizeof(size), 0);
+        ::send(client, version.data(), version.size(), 0);
+        serverOk = command == 0;
+        ::close(client);
+    });
+
+    CEServerClient client;
+    std::string error;
+    bool connected = client.connectTcp("127.0.0.1", ntohs(addr.sin_port), error);
+    std::expected<CEServerVersionInfo, std::string> version = std::unexpected(error);
+    if (connected)
+        version = client.getVersion();
+    client.close();
+    stub.join();
+    ::close(server);
+
+    bool ok = connected &&
+        version &&
+        version->protocolVersion == 6 &&
+        version->versionString == "CHEATENGINE Network 2.3" &&
+        serverOk;
+    printf("  version handshake: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_stack_trace_frame_walk() {
@@ -2246,6 +2304,7 @@ int main(int argc, char* argv[]) {
     test_code_analysis_references();
     test_managed_runtime_detection();
     test_gdb_remote_client();
+    test_ceserver_client();
     test_stack_trace_frame_walk();
     test_break_and_trace();
     test_exception_breakpoint();

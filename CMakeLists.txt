@@ -54,6 +54,7 @@ add_library(cecore SHARED
     analysis/code_analysis.cpp
     analysis/managed_runtime.cpp
     analysis/structure_tools.cpp
+    platform/linux/ceserver_client.cpp
     platform/linux/linux_process.cpp
     platform/linux/ptrace_wrapper.cpp
     platform/linux/injector.cpp
