@@ -10,6 +10,7 @@
 #include "debug/stack_trace.hpp"
 #include "debug/tracer.hpp"
 #include "debug/debug_session.hpp"
+#include "debug/gdb_remote.hpp"
 #include "scripting/lua_engine.hpp"
 
 #include <cstdio>
@@ -20,6 +21,10 @@
 #include <filesystem>
 #include <fstream>
 #include <csignal>
+#include <thread>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -344,6 +349,92 @@ static void test_managed_runtime_detection() {
 
     printf("  Mono/CoreCLR modules: %s\n",
         (monoOk && coreClrOk && none.empty()) ? "OK" : "FAILED");
+}
+
+static void test_gdb_remote_client() {
+    printf("\n── Test: GDB remote client ──\n");
+
+    auto checksum = [](const std::string& payload) {
+        uint8_t sum = 0;
+        for (unsigned char c : payload)
+            sum = static_cast<uint8_t>(sum + c);
+        return sum;
+    };
+    auto sendPacket = [&](int fd, const std::string& payload) {
+        char suffix[4];
+        std::snprintf(suffix, sizeof(suffix), "#%02x", checksum(payload));
+        std::string packet = "$" + payload + suffix;
+        ::send(fd, packet.data(), packet.size(), 0);
+        char ack = 0;
+        ::recv(fd, &ack, 1, MSG_WAITALL);
+    };
+    auto readPacket = [](int fd) {
+        char c = 0;
+        do {
+            if (::recv(fd, &c, 1, MSG_WAITALL) != 1)
+                return std::string{};
+        } while (c != '$');
+
+        std::string payload;
+        while (::recv(fd, &c, 1, MSG_WAITALL) == 1 && c != '#')
+            payload.push_back(c);
+        char ignored[2] = {};
+        ::recv(fd, ignored, 2, MSG_WAITALL);
+        ::send(fd, "+", 1, 0);
+        return payload;
+    };
+
+    int server = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    bool setupOk = server >= 0 &&
+        ::bind(server, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
+        ::listen(server, 1) == 0;
+    socklen_t addrLen = sizeof(addr);
+    if (setupOk)
+        setupOk = ::getsockname(server, reinterpret_cast<sockaddr*>(&addr), &addrLen) == 0;
+
+    if (!setupOk) {
+        if (server >= 0) ::close(server);
+        printf("  packet exchange: FAILED\n");
+        return;
+    }
+
+    bool serverOk = false;
+    std::thread stub([&]() {
+        int client = ::accept(server, nullptr, nullptr);
+        if (client < 0)
+            return;
+
+        auto first = readPacket(client);
+        sendPacket(client, "01020304");
+        auto second = readPacket(client);
+        sendPacket(client, "11223344");
+
+        serverOk = first == "g" && second == "m1000,4";
+        ::close(client);
+    });
+
+    GdbRemoteClient client;
+    std::string error;
+    bool connected = client.connectTcp("127.0.0.1", ntohs(addr.sin_port), error);
+    std::expected<std::string, std::string> regs = std::unexpected(error);
+    std::expected<std::vector<uint8_t>, std::string> mem = std::unexpected(error);
+    if (connected) {
+        regs = client.readRegisters();
+        mem = client.readMemory(0x1000, 4);
+    }
+    client.close();
+    stub.join();
+    ::close(server);
+
+    bool ok = connected &&
+        regs && *regs == "01020304" &&
+        mem && *mem == std::vector<uint8_t>({0x11, 0x22, 0x33, 0x44}) &&
+        serverOk;
+    printf("  packet exchange: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_stack_trace_frame_walk() {
@@ -2154,6 +2245,7 @@ int main(int argc, char* argv[]) {
     test_trainer_generation();
     test_code_analysis_references();
     test_managed_runtime_detection();
+    test_gdb_remote_client();
     test_stack_trace_frame_walk();
     test_break_and_trace();
     test_exception_breakpoint();

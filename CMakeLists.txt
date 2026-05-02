@@ -67,6 +67,7 @@ add_library(cecore SHARED
     debug/stack_trace.cpp
     debug/tracer.cpp
     debug/debug_session.cpp
+    debug/gdb_remote.cpp
     scanner/memory_scanner.cpp
     scanner/pointer_scanner.cpp
     scripting/lua_engine.cpp

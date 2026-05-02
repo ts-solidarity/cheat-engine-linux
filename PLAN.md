@@ -261,9 +261,11 @@ Note: the Qt GUI now exposes a transparent always-on-top click-through overlay w
 
 **3.3 Network/Remote Features**
 - [ ] Connect to ceserver over TCP (for remote/Android targets)
-- [ ] GDB server interface (connect to GDB-compatible stubs)
+- [x] GDB server interface (connect to GDB-compatible stubs)
 - [ ] Distributed pointer scanning (split work across machines)
 - [ ] Network data compression
+
+Note: a minimal GDB remote serial protocol client can connect to TCP stubs, exchange checksummed packets, read registers, and read memory, with loopback stub regression coverage.
 
 **3.4 Mono/.NET Support**
 - [x] CoreCLR/Mono runtime detection in target
