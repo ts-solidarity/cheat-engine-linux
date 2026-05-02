@@ -87,6 +87,10 @@ private:
     std::string substituteSymbols(const std::string& line,
         const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
         const std::vector<Define>& defines) const;
+    bool resolveForwardLabels(const std::vector<std::string>& asmLines,
+        const std::vector<Alloc>& allocs, std::vector<Label>& labels,
+        const std::vector<Define>& defines, ProcessHandle& proc,
+        std::string& error);
 
     // ── Global symbol table ──
     std::unordered_map<std::string, uintptr_t> globalSymbols_;

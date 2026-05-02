@@ -284,6 +284,24 @@ static bool parseStructDataSize(const std::string& line, size_t& size, std::stri
     return false;
 }
 
+static bool isSimpleLabelDefinition(const std::string& line) {
+    return !line.empty() && line.back() == ':' && line.find_first_of(" \t") == std::string::npos;
+}
+
+static bool parseNopCount(const std::string& countExpr, size_t& count, std::string& error) {
+    try {
+        count = countExpr.empty() ? 1 : std::stoull(countExpr, nullptr, 0);
+    } catch (...) {
+        error = "Invalid NOP count: " + countExpr;
+        return false;
+    }
+    if (count == 0) {
+        error = "NOP count must be greater than zero";
+        return false;
+    }
+    return true;
+}
+
 static bool expandStructDefinitions(const std::string& code, std::string& expanded,
                                     std::vector<std::string>& log, std::string& error) {
     std::istringstream ss(code);
@@ -851,6 +869,199 @@ std::string AutoAssembler::substituteSymbols(const std::string& line,
     return result;
 }
 
+bool AutoAssembler::resolveForwardLabels(const std::vector<std::string>& asmLines,
+    const std::vector<Alloc>& allocs, std::vector<Label>& labels,
+    const std::vector<Define>& defines, ProcessHandle& proc,
+    std::string& error)
+{
+    auto substituteForSizing = [&](const std::string& line, uintptr_t currentAddr) {
+        auto result = substituteSymbols(line, allocs, labels, defines);
+        auto placeholder = formatHexLiteral(currentAddr);
+
+        for (const auto& l : labels) {
+            if (l.address != 0)
+                continue;
+            size_t pos = 0;
+            while ((pos = result.find(l.name, pos)) != std::string::npos) {
+                result.replace(pos, l.name.size(), placeholder);
+                pos += placeholder.size();
+            }
+        }
+        return result;
+    };
+
+    constexpr size_t maxPasses = 8;
+    for (size_t pass = 0; pass < maxPasses; ++pass) {
+        uintptr_t currentAddr = 0;
+        bool changed = false;
+
+        for (const auto& rawLine : asmLines) {
+            auto trimmedLine = trim(rawLine);
+            if (trimmedLine.empty())
+                continue;
+
+            if (isSimpleLabelDefinition(trimmedLine)) {
+                auto labelName = trimmedLine.substr(0, trimmedLine.size() - 1);
+                bool handledLabel = false;
+
+                for (const auto& a : allocs) {
+                    if (a.name == labelName) {
+                        currentAddr = a.address;
+                        handledLabel = true;
+                        break;
+                    }
+                }
+                if (handledLabel)
+                    continue;
+
+                for (auto& l : labels) {
+                    if (l.name == labelName) {
+                        if (currentAddr == 0) {
+                            error = "Label has no active assembly address: " + labelName;
+                            return false;
+                        }
+                        if (l.address != currentAddr) {
+                            l.address = currentAddr;
+                            changed = true;
+                        }
+                        handledLabel = true;
+                        break;
+                    }
+                }
+                if (handledLabel)
+                    continue;
+
+                auto targetAddr = resolveAddress(labelName, allocs, labels, defines);
+                if (targetAddr == 0) {
+                    error = "Unresolved auto-assembler target: " + labelName;
+                    return false;
+                }
+                currentAddr = targetAddr;
+                continue;
+            }
+
+            if (startsWith(trimmedLine, "__FULLACCESS__:") ||
+                startsWith(trimmedLine, "__ASSERT__:") ||
+                startsWith(trimmedLine, "__UNREGISTERSYMBOL__:") ||
+                startsWith(trimmedLine, "__DEALLOC__:") ||
+                startsWith(trimmedLine, "__CREATETHREAD__:") ||
+                startsWith(trimmedLine, "__CREATETHREADANDWAIT__:") ||
+                startsWith(trimmedLine, "__LOADBINARY__:") ||
+                startsWith(trimmedLine, "__LOADLIBRARY__:")) {
+                continue;
+            }
+
+            if (currentAddr == 0) {
+                error = "No active assembly address for line: " + trimmedLine;
+                return false;
+            }
+
+            if (startsWith(trimmedLine, "__REASSEMBLE__:")) {
+                auto addrExpr = trimmedLine.substr(15);
+                auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+                if (!addr) {
+                    error = "Invalid REASSEMBLE target: " + addrExpr;
+                    return false;
+                }
+
+                uint8_t instrBuf[16];
+                auto rr = proc.read(addr, instrBuf, sizeof(instrBuf));
+                if (!rr || *rr == 0) {
+                    error = "REASSEMBLE read failed at " + addrExpr;
+                    return false;
+                }
+
+                Disassembler dis(Arch::X86_64);
+                auto insns = dis.disassemble(addr, {instrBuf, *rr}, 1);
+                if (insns.empty()) {
+                    error = "REASSEMBLE disassembly failed at " + addrExpr;
+                    return false;
+                }
+
+                auto asmCode = insns[0].mnemonic + " " + insns[0].operands;
+                auto asmResult = asm64_.assemble(asmCode, currentAddr);
+                if (!asmResult) {
+                    error = "REASSEMBLE sizing failed at " + addrExpr + ": " + asmResult.error();
+                    return false;
+                }
+                currentAddr += asmResult->size();
+                continue;
+            }
+
+            if (startsWith(trimmedLine, "__READMEM__:")) {
+                auto args = trimmedLine.substr(12);
+                auto comma = args.find(',');
+                if (comma == std::string::npos) {
+                    error = "READMEM requires address and size";
+                    return false;
+                }
+
+                auto sizeStr = trim(args.substr(comma + 1));
+                try {
+                    currentAddr += std::stoull(sizeStr, nullptr, 0);
+                } catch (...) {
+                    error = "Invalid READMEM size: " + sizeStr;
+                    return false;
+                }
+                continue;
+            }
+
+            if (startsWith(trimmedLine, "__FILLMEM__:")) {
+                continue;
+            }
+
+            if (startsWith(trimmedLine, "__NOP__:")) {
+                auto countExpr = trim(trimmedLine.substr(8));
+                size_t count = 1;
+                if (!parseNopCount(countExpr, count, error))
+                    return false;
+                currentAddr += count;
+                continue;
+            }
+
+            if (startsWith(trimmedLine, "__DS__:")) {
+                auto text = stripOptionalQuotes(trimmedLine.substr(7));
+                if (text.empty()) {
+                    error = "DS requires a string";
+                    return false;
+                }
+                currentAddr += text.size();
+                continue;
+            }
+
+            auto upper = toUpper(trimmedLine);
+            if (startsWith(upper, "DB ") || startsWith(upper, "DW ") ||
+                startsWith(upper, "DD ") || startsWith(upper, "DQ ")) {
+                auto op = upper.substr(0, 2);
+                auto dataStr = trim(trimmedLine.substr(3));
+                std::vector<uint8_t> dataBytes;
+                std::string parseError;
+                if (!parseDataDirective(op, dataStr, dataBytes, parseError)) {
+                    error = parseError;
+                    return false;
+                }
+                currentAddr += dataBytes.size();
+                continue;
+            }
+
+            auto substituted = substituteForSizing(trimmedLine, currentAddr);
+            auto asmResult = asm64_.assemble(substituted, currentAddr);
+            if (!asmResult) {
+                error = "Assembly sizing error at " + formatHexLiteral(currentAddr) +
+                    ": " + asmResult.error() + "\n  Line: " + trimmedLine;
+                return false;
+            }
+            currentAddr += asmResult->size();
+        }
+
+        if (!changed)
+            return true;
+    }
+
+    error = "Forward label resolution did not converge";
+    return false;
+}
+
 // ── Symbol management ──
 
 void AutoAssembler::registerSymbol(const std::string& name, uintptr_t address) {
@@ -948,6 +1159,9 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         }
     }
 
+    if (!resolveForwardLabels(asmLines, allocs, labels, defines, proc, result.error))
+        return result;
+
     // ── Phase 3: Assemble and inject ──
     uintptr_t currentAddr = 0;
     std::string currentLabel;
@@ -956,7 +1170,7 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         auto trimmedLine = trim(rawLine);
 
         // Check for label definition (name:)
-        if (trimmedLine.back() == ':' && trimmedLine.find(' ') == std::string::npos) {
+        if (isSimpleLabelDefinition(trimmedLine)) {
             auto labelName = trimmedLine.substr(0, trimmedLine.size() - 1);
 
             bool handledLabel = false;
@@ -1283,16 +1497,8 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
         if (startsWith(trimmedLine, "__NOP__:")) {
             auto countExpr = trim(trimmedLine.substr(8));
             size_t count = 1;
-            try {
-                count = countExpr.empty() ? 1 : std::stoull(countExpr, nullptr, 0);
-            } catch (...) {
-                result.error = "Invalid NOP count: " + countExpr;
+            if (!parseNopCount(countExpr, count, result.error))
                 return result;
-            }
-            if (count == 0) {
-                result.error = "NOP count must be greater than zero";
-                return result;
-            }
 
             std::vector<uint8_t> orig(count);
             proc.read(currentAddr, orig.data(), orig.size());

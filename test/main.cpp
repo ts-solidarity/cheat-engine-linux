@@ -544,6 +544,42 @@ static void test_autoassembler_nop_fillmem(pid_t pid) {
     printf("  nop/fillmem: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_forward_labels(pid_t pid) {
+    printf("\n── Test: AutoAssembler forward labels ──\n");
+
+    LinuxProcessHandle proc(pid);
+    AutoAssembler aa;
+
+    auto result = aa.execute(proc,
+        "[ENABLE]\n"
+        "alloc(forwardblock, 512)\n"
+        "label(farreturn)\n"
+        "registersymbol(forwardblock,farreturn)\n"
+        "forwardblock:\n"
+        "jmp farreturn\n"
+        "nop 200\n"
+        "farreturn:\n"
+        "ret\n");
+
+    uintptr_t block = aa.resolveSymbol("forwardblock");
+    uintptr_t farreturn = aa.resolveSymbol("farreturn");
+    uint8_t firstByte = 0;
+    uint8_t returnByte = 0;
+    if (block)
+        proc.read(block, &firstByte, sizeof(firstByte));
+    if (farreturn)
+        proc.read(farreturn, &returnByte, sizeof(returnByte));
+
+    bool ok = result.success &&
+        block != 0 &&
+        farreturn == block + 205 &&
+        firstByte == 0xe9 &&
+        returnByte == 0xc3;
+
+    aa.disable(proc, "", result.disableInfo);
+    printf("  forward label sizing: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_ds(pid_t pid) {
     printf("\n── Test: AutoAssembler ds ──\n");
 
@@ -1932,6 +1968,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_nop_fillmem(targetPid);
+    test_autoassembler_forward_labels(targetPid);
     test_autoassembler_ds(targetPid);
     test_autoassembler_custom_commands(targetPid);
     test_autoassembler_processing_hooks(targetPid);

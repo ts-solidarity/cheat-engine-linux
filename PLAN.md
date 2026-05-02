@@ -69,7 +69,7 @@
 - [ ] `{$try} ... {$except}` — exception handling regions
 - [x] `loadlibrary(path)` — .so injection from scripts
 - [x] `loadbinary(address, file)` — binary file loading
-- [ ] Forward label resolution with NOP padding (multi-pass)
+- [x] Forward label resolution with NOP padding (multi-pass)
 - [x] Near-allocation preference (within ±2GB for short jumps)
 - [x] Custom registered commands (plugin-extensible)
 - [x] Auto-assembler prologues (pre/post processing hooks)
@@ -88,6 +88,8 @@ Note: custom auto-assembler commands can now be registered from C++ with case-in
 Note: auto-assembler preprocessor and postprocessor hooks now transform the extracted enable section for both execution and syntax checks, with explicit hook failure errors.
 
 Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field offsets and struct sizes, exposing both `struct.field` and plain field names as script symbols.
+
+Note: auto-assembler forward labels now resolve through a bounded multi-pass sizing step before injection, so jumps over later NOP/data padding assemble with stable target addresses.
 
 **1.4 Memory Records (Address List)**
 - [x] Freeze direction: increase only, decrease only, never decrease, never increase
