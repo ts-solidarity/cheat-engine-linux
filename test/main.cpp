@@ -7,6 +7,7 @@
 #include "analysis/structure_tools.hpp"
 #include "debug/breakpoint_manager.hpp"
 #include "debug/stack_trace.hpp"
+#include "debug/tracer.hpp"
 #include "scripting/lua_engine.hpp"
 
 #include <cstdio>
@@ -22,6 +23,13 @@
 
 using namespace ce;
 using namespace ce::os;
+
+static uint64_t g_traceTargetCounter = 0;
+
+extern "C" __attribute__((noinline)) void cecore_trace_target_tick() {
+    ++g_traceTargetCounter;
+    asm volatile("nop\nnop\nnop\n" ::: "memory");
+}
 
 class FakeProcessHandle final : public ProcessHandle {
 public:
@@ -339,6 +347,42 @@ static void test_stack_trace_frame_walk() {
         frames[2].framePointer == rbp1;
 
     printf("  frame pointer walk: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_break_and_trace() {
+    printf("\n── Test: Break and trace ──\n");
+
+    pid_t child = fork();
+    if (child == 0) {
+        while (true)
+            cecore_trace_target_tick();
+        _exit(0);
+    }
+    if (child < 0) {
+        printf("  break and trace: FAILED\n");
+        return;
+    }
+
+    usleep(50000);
+
+    LinuxProcessHandle proc(child);
+    LinuxDebugger dbg;
+    Tracer tracer;
+    TraceConfig config;
+    config.startAddress = reinterpret_cast<uintptr_t>(&cecore_trace_target_tick);
+    config.maxSteps = 8;
+
+    auto entries = tracer.trace(proc, dbg, config);
+    kill(child, SIGKILL);
+    waitpid(child, nullptr, 0);
+
+    bool hitStart = !entries.empty() && entries[0].address == config.startAddress;
+    bool countOk = entries.size() == static_cast<size_t>(config.maxSteps);
+    bool decoded = std::any_of(entries.begin(), entries.end(), [](const TraceEntry& entry) {
+        return entry.instruction != "??";
+    });
+
+    printf("  break and trace: %s\n", (hitStart && countOk && decoded) ? "OK" : "FAILED");
 }
 
 static void test_structure_tools() {
@@ -2020,6 +2064,7 @@ int main(int argc, char* argv[]) {
     test_trainer_generation();
     test_code_analysis_references();
     test_stack_trace_frame_walk();
+    test_break_and_trace();
     test_structure_tools();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);
