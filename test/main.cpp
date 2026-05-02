@@ -8,11 +8,13 @@
 #include "debug/breakpoint_manager.hpp"
 #include "debug/stack_trace.hpp"
 #include "debug/tracer.hpp"
+#include "debug/debug_session.hpp"
 #include "scripting/lua_engine.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -383,6 +385,63 @@ static void test_break_and_trace() {
     });
 
     printf("  break and trace: %s\n", (hitStart && countOk && decoded) ? "OK" : "FAILED");
+}
+
+static void test_exception_breakpoint() {
+    printf("\n── Test: Exception breakpoints ──\n");
+
+    int fds[2];
+    if (pipe(fds) != 0) {
+        printf("  SIGSEGV exception breakpoint: FAILED\n");
+        return;
+    }
+
+    pid_t child = fork();
+    if (child == 0) {
+        close(fds[1]);
+        char token = 0;
+        (void)read(fds[0], &token, 1);
+        close(fds[0]);
+        volatile int* bad = reinterpret_cast<volatile int*>(uintptr_t{0x1});
+        (void)*bad;
+        _exit(0);
+    }
+
+    close(fds[0]);
+    if (child < 0) {
+        close(fds[1]);
+        printf("  SIGSEGV exception breakpoint: FAILED\n");
+        return;
+    }
+
+    LinuxProcessHandle proc(child);
+    DebugSession session;
+    std::atomic<bool> hit{false};
+    std::atomic<int> signal{0};
+    session.setEventCallback([&](const DebugEvent& event) {
+        if (event.type == DebugEventType::ExceptionBreakpointHit) {
+            hit.store(true);
+            signal.store(event.signal);
+        }
+    });
+    session.addExceptionBreakpoint(SIGSEGV);
+
+    bool attached = session.attach(child, &proc);
+    write(fds[1], "x", 1);
+    close(fds[1]);
+    if (attached)
+        session.continueExecution();
+
+    for (int i = 0; i < 100 && !hit.load(); ++i)
+        usleep(10000);
+
+    if (session.isAttached())
+        session.detach();
+    kill(child, SIGKILL);
+    waitpid(child, nullptr, 0);
+
+    printf("  SIGSEGV exception breakpoint: %s\n",
+        (attached && hit.load() && signal.load() == SIGSEGV) ? "OK" : "FAILED");
 }
 
 static void test_structure_tools() {
@@ -2065,6 +2124,7 @@ int main(int argc, char* argv[]) {
     test_code_analysis_references();
     test_stack_trace_frame_walk();
     test_break_and_trace();
+    test_exception_breakpoint();
     test_structure_tools();
     test_autoassembler_unregister_symbol(targetPid);
     test_autoassembler_dealloc(targetPid);

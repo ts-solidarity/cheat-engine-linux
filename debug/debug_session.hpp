@@ -7,6 +7,7 @@
 #include <atomic>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 namespace ce {
@@ -15,6 +16,7 @@ enum class StepMode { Into, Over, Out, RunToCursor };
 
 enum class DebugEventType {
     BreakpointHit,
+    ExceptionBreakpointHit,
     SingleStep,
     ProcessExited,
     SignalReceived,
@@ -54,6 +56,11 @@ public:
     /// Step (into, over, out, run to cursor).
     void step(StepMode mode, uintptr_t targetAddress = 0);
 
+    /// Break when the target receives this signal (for example SIGSEGV).
+    void addExceptionBreakpoint(int signal);
+    void removeExceptionBreakpoint(int signal);
+    bool hasExceptionBreakpoint(int signal) const;
+
     /// Is the process currently stopped?
     bool isStopped() const { return stopped_.load(); }
 
@@ -88,6 +95,8 @@ private:
     std::mutex bpMutex_;
     std::unordered_map<uintptr_t, SoftBp> softBreakpoints_;
     int nextSoftBpId_ = 1;
+    mutable std::mutex exceptionMutex_;
+    std::unordered_set<int> exceptionBreakSignals_;
 
     CpuContext stopContext_;
     mutable std::mutex contextMutex_;

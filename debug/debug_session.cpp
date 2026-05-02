@@ -106,6 +106,21 @@ void DebugSession::continueExecution() {
         stopped_ = true;
 }
 
+void DebugSession::addExceptionBreakpoint(int signal) {
+    std::lock_guard lock(exceptionMutex_);
+    exceptionBreakSignals_.insert(signal);
+}
+
+void DebugSession::removeExceptionBreakpoint(int signal) {
+    std::lock_guard lock(exceptionMutex_);
+    exceptionBreakSignals_.erase(signal);
+}
+
+bool DebugSession::hasExceptionBreakpoint(int signal) const {
+    std::lock_guard lock(exceptionMutex_);
+    return exceptionBreakSignals_.contains(signal);
+}
+
 void DebugSession::eventLoop() {
     while (attached_.load()) {
         int status = 0;
@@ -176,7 +191,11 @@ void DebugSession::eventLoop() {
             }
 
             DebugEvent evt;
-            evt.type = (sig == SIGTRAP) ? DebugEventType::SingleStep : DebugEventType::SignalReceived;
+            evt.type = (sig == SIGTRAP)
+                ? DebugEventType::SingleStep
+                : (hasExceptionBreakpoint(sig)
+                    ? DebugEventType::ExceptionBreakpointHit
+                    : DebugEventType::SignalReceived);
             evt.tid = pid_;
             evt.address = regs.rip;
             evt.signal = sig;

@@ -52,7 +52,7 @@
 - [x] "Find what accesses this address" (log all instructions reading an address)
 - [x] "Find what writes to this address" (log all instructions writing an address)
 - [x] Break and trace (step N instructions, log each, with filters)
-- [ ] Exception breakpoints (SIGSEGV-based memory access detection)
+- [x] Exception breakpoints (SIGSEGV-based memory access detection)
 - [x] Thread-specific breakpoints
 - [x] One-time breakpoints (auto-remove after hit)
 - [x] Breakpoint list manager window
@@ -94,6 +94,8 @@ Note: auto-assembler forward labels now resolve through a bounded multi-pass siz
 Note: auto-assembler `createthread` and `createthreadandwait` now execute injected entry points through ptrace-driven remote `pthread_create`, using `pthread_tryjoin_np` for timeout-aware waits and detaching async workers.
 
 Note: break-and-trace has regression coverage for start-address breakpoints followed by fixed-count single stepping with decoded instruction logging.
+
+Note: debug sessions now support explicit signal exception breakpoints, with SIGSEGV stops delivered as exception-breakpoint events and covered by a forked faulting-process regression test.
 
 **1.4 Memory Records (Address List)**
 - [x] Freeze direction: increase only, decrease only, never decrease, never increase
