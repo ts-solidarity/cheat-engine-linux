@@ -263,11 +263,13 @@ Note: the Qt GUI now exposes a transparent always-on-top click-through overlay w
 - [x] Connect to ceserver over TCP (for remote/Android targets)
 - [x] GDB server interface (connect to GDB-compatible stubs)
 - [ ] Distributed pointer scanning (split work across machines)
-- [ ] Network data compression
+- [x] Network data compression
 
 Note: a minimal GDB remote serial protocol client can connect to TCP stubs, exchange checksummed packets, read registers, and read memory, with loopback stub regression coverage.
 
 Note: a ceserver TCP client now performs the native `CMD_GETVERSION` handshake and parses the protocol/version string, with loopback server regression coverage.
+
+Note: network payload compression now has zlib helpers for compressed remote transfer blocks, with round-trip, invalid-level, and size-mismatch regression coverage.
 
 **3.4 Mono/.NET Support**
 - [x] CoreCLR/Mono runtime detection in target

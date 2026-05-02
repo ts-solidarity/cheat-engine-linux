@@ -54,6 +54,7 @@ add_library(cecore SHARED
     analysis/code_analysis.cpp
     analysis/managed_runtime.cpp
     analysis/structure_tools.cpp
+    platform/network_compression.cpp
     platform/linux/ceserver_client.cpp
     platform/linux/linux_process.cpp
     platform/linux/ptrace_wrapper.cpp
@@ -82,7 +83,7 @@ target_include_directories(cecore PUBLIC
     ${LUA_DIR}
 )
 target_link_libraries(cecore PRIVATE
-    dl pthread ${CAPSTONE_LIB} ${KEYSTONE_LIB}
+    dl pthread z ${CAPSTONE_LIB} ${KEYSTONE_LIB}
     ${LUA_DIR}/liblua.a m  # Static link Lua
 )
 

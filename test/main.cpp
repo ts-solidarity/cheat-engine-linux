@@ -1,6 +1,7 @@
 #include "platform/linux/linux_process.hpp"
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "platform/linux/ceserver_client.hpp"
+#include "platform/network_compression.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
 #include "core/trainer.hpp"
@@ -493,6 +494,34 @@ static void test_ceserver_client() {
         version->versionString == "CHEATENGINE Network 2.3" &&
         serverOk;
     printf("  version handshake: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_network_compression() {
+    printf("\n── Test: Network compression ──\n");
+
+    std::vector<uint8_t> payload;
+    payload.reserve(4096);
+    for (int i = 0; i < 4096; ++i)
+        payload.push_back(static_cast<uint8_t>((i * 17) & 0xff));
+
+    auto compressed = ce::net::compressPayload(payload, 9);
+    std::expected<std::vector<uint8_t>, std::string> decompressed =
+        std::unexpected(compressed ? "" : compressed.error());
+    if (compressed)
+        decompressed = ce::net::decompressPayload(*compressed, payload.size());
+
+    auto badLevel = ce::net::compressPayload(payload, 99);
+    std::expected<std::vector<uint8_t>, std::string> wrongSize =
+        std::unexpected(compressed ? "" : compressed.error());
+    if (compressed)
+        wrongSize = ce::net::decompressPayload(*compressed, payload.size() + 1);
+
+    bool ok = compressed &&
+        decompressed &&
+        *decompressed == payload &&
+        !badLevel &&
+        !wrongSize;
+    printf("  zlib round trip: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_stack_trace_frame_walk() {
@@ -2305,6 +2334,7 @@ int main(int argc, char* argv[]) {
     test_managed_runtime_detection();
     test_gdb_remote_client();
     test_ceserver_client();
+    test_network_compression();
     test_stack_trace_frame_walk();
     test_break_and_trace();
     test_exception_breakpoint();
