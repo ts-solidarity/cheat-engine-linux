@@ -1608,12 +1608,16 @@ static void test_kernel_driver_client() {
     KernelDriverClient client;
     uint64_t value = 0;
     auto unopened = client.readProcessMemory(getpid(), reinterpret_cast<uintptr_t>(&value), &value, sizeof(value));
+    auto unopenedPhysical = client.readPhysicalMemory(0x1000, &value, sizeof(value));
 
     bool ioctlOk = CECORE_KMOD_IOC_PING != 0 &&
         CECORE_KMOD_IOC_READ_PROCESS_VM != CECORE_KMOD_IOC_WRITE_PROCESS_VM &&
+        CECORE_KMOD_IOC_READ_PHYSICAL != CECORE_KMOD_IOC_WRITE_PHYSICAL &&
         std::string(CECORE_KMOD_PATH) == "/dev/cecore";
     bool unopenedOk = !unopened &&
-        unopened.error() == std::make_error_code(std::errc::bad_file_descriptor);
+        unopened.error() == std::make_error_code(std::errc::bad_file_descriptor) &&
+        !unopenedPhysical &&
+        unopenedPhysical.error() == std::make_error_code(std::errc::bad_file_descriptor);
 
     printf("  ioctl wrapper: %s\n", (ioctlOk && unopenedOk) ? "OK" : "FAILED");
 }

@@ -2,6 +2,7 @@
 
 #include <linux/capability.h>
 #include <linux/fs.h>
+#include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
@@ -78,15 +79,86 @@ static ssize_t cecore_access_process_vm(struct cecore_kmod_mem_request *req, int
     return done ? (ssize_t)done : ret;
 }
 
+static ssize_t cecore_access_physical(struct cecore_kmod_phys_request *req, int write)
+{
+    size_t done = 0;
+    int ret = 0;
+
+    if (!req->user_buffer)
+        return -EINVAL;
+    if (req->size == 0)
+        return 0;
+
+    while (done < req->size) {
+        phys_addr_t phys = (phys_addr_t)(req->physical_address + done);
+        size_t page_offset = offset_in_page(phys);
+        size_t chunk = min_t(size_t, PAGE_SIZE - page_offset, req->size - done);
+        void __iomem *mapped;
+        void __user *user = (void __user *)(uintptr_t)(req->user_buffer + done);
+
+        mapped = ioremap(phys & PAGE_MASK, PAGE_SIZE);
+        if (!mapped) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        if (write) {
+            void *buffer = memdup_user(user, chunk);
+            if (IS_ERR(buffer)) {
+                ret = PTR_ERR(buffer);
+                iounmap(mapped);
+                break;
+            }
+            memcpy_toio((char __iomem *)mapped + page_offset, buffer, chunk);
+            kfree(buffer);
+        } else {
+            void *buffer = kmalloc(chunk, GFP_KERNEL);
+            if (!buffer) {
+                ret = -ENOMEM;
+                iounmap(mapped);
+                break;
+            }
+            memcpy_fromio(buffer, (char __iomem *)mapped + page_offset, chunk);
+            if (copy_to_user(user, buffer, chunk))
+                ret = -EFAULT;
+            kfree(buffer);
+            if (ret) {
+                iounmap(mapped);
+                break;
+            }
+        }
+
+        iounmap(mapped);
+        done += chunk;
+    }
+
+    req->bytes_transferred = done;
+    return done ? (ssize_t)done : ret;
+}
+
 static long cecore_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct cecore_kmod_mem_request req;
+    struct cecore_kmod_phys_request phys_req;
     ssize_t result;
 
     (void)file;
 
     if (cmd == CECORE_KMOD_IOC_PING)
         return cecore_check_privilege();
+
+    if (cmd == CECORE_KMOD_IOC_READ_PHYSICAL ||
+        cmd == CECORE_KMOD_IOC_WRITE_PHYSICAL) {
+        result = cecore_check_privilege();
+        if (result)
+            return result;
+        if (copy_from_user(&phys_req, (void __user *)arg, sizeof(phys_req)))
+            return -EFAULT;
+        result = cecore_access_physical(&phys_req, cmd == CECORE_KMOD_IOC_WRITE_PHYSICAL);
+        if (copy_to_user((void __user *)arg, &phys_req, sizeof(phys_req)))
+            return -EFAULT;
+        return result < 0 ? result : 0;
+    }
 
     if (cmd != CECORE_KMOD_IOC_READ_PROCESS_VM &&
         cmd != CECORE_KMOD_IOC_WRITE_PROCESS_VM)

@@ -46,6 +46,24 @@ Result<size_t> KernelDriverClient::writeProcessMemory(
         size);
 }
 
+Result<size_t> KernelDriverClient::readPhysicalMemory(
+    uintptr_t physicalAddress,
+    void* buffer,
+    size_t size) {
+    return accessPhysicalMemory(CECORE_KMOD_IOC_READ_PHYSICAL, physicalAddress, buffer, size);
+}
+
+Result<size_t> KernelDriverClient::writePhysicalMemory(
+    uintptr_t physicalAddress,
+    const void* buffer,
+    size_t size) {
+    return accessPhysicalMemory(
+        CECORE_KMOD_IOC_WRITE_PHYSICAL,
+        physicalAddress,
+        const_cast<void*>(buffer),
+        size);
+}
+
 Result<size_t> KernelDriverClient::accessProcessMemory(
     unsigned long request,
     pid_t pid,
@@ -60,6 +78,26 @@ Result<size_t> KernelDriverClient::accessProcessMemory(
     cecore_kmod_mem_request mem{};
     mem.pid = static_cast<__u32>(pid);
     mem.remote_address = address;
+    mem.user_buffer = reinterpret_cast<__u64>(buffer);
+    mem.size = size;
+
+    if (::ioctl(fd_, request, &mem) < 0)
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    return static_cast<size_t>(mem.bytes_transferred);
+}
+
+Result<size_t> KernelDriverClient::accessPhysicalMemory(
+    unsigned long request,
+    uintptr_t physicalAddress,
+    void* buffer,
+    size_t size) {
+    if (fd_ < 0)
+        return std::unexpected(std::make_error_code(std::errc::bad_file_descriptor));
+    if (!buffer && size != 0)
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+
+    cecore_kmod_phys_request mem{};
+    mem.physical_address = physicalAddress;
     mem.user_buffer = reinterpret_cast<__u64>(buffer);
     mem.size = size;
 

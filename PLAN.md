@@ -291,7 +291,7 @@ Note: managed method symbols with resolved JIT/native entry addresses can now be
 
 **3.5 Kernel Module (optional)**
 - [x] Linux kernel module for privileged operations
-- [ ] Physical memory read/write (bypass ptrace restrictions)
+- [x] Physical memory read/write (bypass ptrace restrictions)
 - [ ] Process hiding
 - [ ] Page table manipulation
 - [x] Kernel symbol resolution
@@ -299,6 +299,8 @@ Note: managed method symbols with resolved JIT/native entry addresses can now be
 Note: kernel symbol resolution now has a `/proc/kallsyms` parser with raw and module-qualified lookup, address-to-symbol+offset resolution, module symbol handling, and zero-address filtering for restricted kallsyms output.
 
 Note: an optional out-of-tree `cecore_kmod` kernel helper now builds against the installed kernel headers and exposes CAP_SYS_ADMIN-gated ioctls for privileged target process memory access, with a user-space client wrapper and regression coverage for ioctl wiring.
+
+Note: the kernel helper now also exposes CAP_SYS_ADMIN-gated physical-address read/write ioctls backed by page-sized `ioremap` windows, with matching user-space wrapper methods and kernel-header build validation.
 
 ---
 

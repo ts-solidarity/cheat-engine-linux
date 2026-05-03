@@ -22,12 +22,19 @@ public:
 
     Result<size_t> readProcessMemory(pid_t pid, uintptr_t address, void* buffer, size_t size);
     Result<size_t> writeProcessMemory(pid_t pid, uintptr_t address, const void* buffer, size_t size);
+    Result<size_t> readPhysicalMemory(uintptr_t physicalAddress, void* buffer, size_t size);
+    Result<size_t> writePhysicalMemory(uintptr_t physicalAddress, const void* buffer, size_t size);
 
 private:
     Result<size_t> accessProcessMemory(
         unsigned long request,
         pid_t pid,
         uintptr_t address,
+        void* buffer,
+        size_t size);
+    Result<size_t> accessPhysicalMemory(
+        unsigned long request,
+        uintptr_t physicalAddress,
         void* buffer,
         size_t size);
 
