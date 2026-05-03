@@ -57,6 +57,7 @@ add_library(cecore SHARED
     platform/network_compression.cpp
     platform/vulkan_overlay_injector.cpp
     platform/linux/ceserver_client.cpp
+    platform/linux/kernel_driver.cpp
     platform/linux/linux_process.cpp
     platform/linux/ptrace_wrapper.cpp
     platform/linux/injector.cpp

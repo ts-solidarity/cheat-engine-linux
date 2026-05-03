@@ -1,6 +1,7 @@
 #include "platform/linux/linux_process.hpp"
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "platform/linux/ceserver_client.hpp"
+#include "platform/linux/kernel_driver.hpp"
 #include "platform/network_compression.hpp"
 #include "platform/vulkan_overlay_injector.hpp"
 #include "scanner/pointer_scanner.hpp"
@@ -1601,6 +1602,22 @@ static void test_kernel_symbol_resolver() {
         (loaded && resolver.count() == 4 && lookupOk && resolveOk && zeroOk) ? "OK" : "FAILED");
 }
 
+static void test_kernel_driver_client() {
+    printf("\n── Test: Kernel driver client ──\n");
+
+    KernelDriverClient client;
+    uint64_t value = 0;
+    auto unopened = client.readProcessMemory(getpid(), reinterpret_cast<uintptr_t>(&value), &value, sizeof(value));
+
+    bool ioctlOk = CECORE_KMOD_IOC_PING != 0 &&
+        CECORE_KMOD_IOC_READ_PROCESS_VM != CECORE_KMOD_IOC_WRITE_PROCESS_VM &&
+        std::string(CECORE_KMOD_PATH) == "/dev/cecore";
+    bool unopenedOk = !unopened &&
+        unopened.error() == std::make_error_code(std::errc::bad_file_descriptor);
+
+    printf("  ioctl wrapper: %s\n", (ioctlOk && unopenedOk) ? "OK" : "FAILED");
+}
+
 static void test_vulkan_overlay_injector() {
     printf("\n── Test: Vulkan overlay injector ──\n");
 
@@ -2635,6 +2652,7 @@ int main(int argc, char* argv[]) {
     test_thread_filtered_breakpoints();
     test_managed_method_breakpoints();
     test_kernel_symbol_resolver();
+    test_kernel_driver_client();
     test_vulkan_overlay_injector();
     test_lua_file_aliases();
     test_lua_local_memory();

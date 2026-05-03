@@ -290,13 +290,15 @@ Note: managed type extraction now deduplicates object type handles and resolves 
 Note: managed method symbols with resolved JIT/native entry addresses can now be bridged into software execute breakpoints with method metadata, conditions, one-shot behavior, and thread filters preserved in the breakpoint manager.
 
 **3.5 Kernel Module (optional)**
-- [ ] Linux kernel module for privileged operations
+- [x] Linux kernel module for privileged operations
 - [ ] Physical memory read/write (bypass ptrace restrictions)
 - [ ] Process hiding
 - [ ] Page table manipulation
 - [x] Kernel symbol resolution
 
 Note: kernel symbol resolution now has a `/proc/kallsyms` parser with raw and module-qualified lookup, address-to-symbol+offset resolution, module symbol handling, and zero-address filtering for restricted kallsyms output.
+
+Note: an optional out-of-tree `cecore_kmod` kernel helper now builds against the installed kernel headers and exposes CAP_SYS_ADMIN-gated ioctls for privileged target process memory access, with a user-space client wrapper and regression coverage for ioctl wiring.
 
 ---
 

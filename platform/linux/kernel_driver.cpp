@@ -1,0 +1,71 @@
+#include "platform/linux/kernel_driver.hpp"
+
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <system_error>
+#include <unistd.h>
+
+namespace ce::os {
+
+KernelDriverClient::~KernelDriverClient() {
+    close();
+}
+
+bool KernelDriverClient::open(const std::string& path) {
+    close();
+    fd_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    return fd_ >= 0;
+}
+
+void KernelDriverClient::close() {
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+Result<size_t> KernelDriverClient::readProcessMemory(
+    pid_t pid,
+    uintptr_t address,
+    void* buffer,
+    size_t size) {
+    return accessProcessMemory(CECORE_KMOD_IOC_READ_PROCESS_VM, pid, address, buffer, size);
+}
+
+Result<size_t> KernelDriverClient::writeProcessMemory(
+    pid_t pid,
+    uintptr_t address,
+    const void* buffer,
+    size_t size) {
+    return accessProcessMemory(
+        CECORE_KMOD_IOC_WRITE_PROCESS_VM,
+        pid,
+        address,
+        const_cast<void*>(buffer),
+        size);
+}
+
+Result<size_t> KernelDriverClient::accessProcessMemory(
+    unsigned long request,
+    pid_t pid,
+    uintptr_t address,
+    void* buffer,
+    size_t size) {
+    if (fd_ < 0)
+        return std::unexpected(std::make_error_code(std::errc::bad_file_descriptor));
+    if (!buffer && size != 0)
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+
+    cecore_kmod_mem_request mem{};
+    mem.pid = static_cast<__u32>(pid);
+    mem.remote_address = address;
+    mem.user_buffer = reinterpret_cast<__u64>(buffer);
+    mem.size = size;
+
+    if (::ioctl(fd_, request, &mem) < 0)
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    return static_cast<size_t>(mem.bytes_transferred);
+}
+
+} // namespace ce::os
