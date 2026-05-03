@@ -1,49 +1,143 @@
 # Cheat Engine for Linux
 
-<p align="center">
-  <strong>A Linux-native memory scanner, debugger, and code injection tool</strong><br>
-  Rewritten from scratch in C++23 with Qt6 — no Wine, no compatibility layers
-</p>
+Linux-native memory scanner, debugger, trainer, and code injection tooling inspired by Cheat Engine.
 
----
+This is a from-scratch C++23/Qt6 implementation. It uses native Linux APIs such as `process_vm_readv`, `ptrace`, `/proc`, explicit Vulkan layers, and an optional privileged kernel helper instead of Wine or Windows compatibility layers.
 
-## What is this?
+Current local source snapshot: about 21.9K lines across 113 C/C++ source/header files, excluding `build/`.
 
-This is a from-scratch reimplementation of [Cheat Engine](https://cheatengine.org/) for Linux. Instead of porting the original 400K-line Pascal codebase, we rewrote the core engine in modern C++ using native Linux APIs (`process_vm_readv`, `ptrace`, `/proc` filesystem).
+## Status
 
-**9,120 lines of C++** replacing 400,000 lines of Pascal.
+Most planned user-facing CE-style features are implemented:
 
-## Features
+- Memory scanning: numeric/string/AOB/binary/all-types/grouped/custom Lua formula scans
+- Next scans: changed/unchanged/increased/decreased/same-as-first/percentage comparisons
+- Memory editing: typed reads/writes, freeze modes, address list records, hotkeys
+- Tables/trainers: CE-style `.CT` XML, protected `.CETRAINER`, standalone trainer generation
+- Debugging: hardware/software breakpoints, conditions, one-shot/thread filters, break-and-trace, exception breakpoints
+- Auto-assembler: allocation, labels, symbols, AOB scans, data directives, `readmem`, `reassemble`, `loadbinary`, `loadlibrary`, `createthread`, `{$try}/{$except}`
+- Lua 5.3 compatibility surface for memory, scans, table/address-list state, utility dialogs, hotkeys, threads, debug metadata, and Qt GUI objects
+- Analysis: code references, function/call graph discovery, code caves, RIP-relative scans, structures, stack traces
+- Remote/network: ceserver TCP handshake client, GDB remote client, network compression, distributed pointer scan sharding
+- Overlay: X11 click-through overlay and a Vulkan explicit layer injection path
+- Managed runtimes: Mono/CoreCLR detection, managed object enumeration, type extraction, JIT-address method breakpoint bridge
+- Optional kernel helper: privileged process memory access, physical memory access, virtual-to-physical address translation, kernel symbol lookup
 
-### Memory Scanning
-- Multi-threaded scanner (uses all CPU cores)
-- Value types: byte, int16, int32, int64, float, double, string, array of bytes, binary, "all types"
-- Grouped scans (`vtGrouped`) and Lua formula scans (`soCustom`)
-- Codepage-aware text scans via `iconv` encodings such as `ISO-8859-1` and `CP1252`
-- AOB scanning with `??` wildcards
-- Scan comparisons: exact, greater, less, between, changed, unchanged, increased, decreased, unknown
-- Handles processes with 1GB+ of memory in under a second
+One planned item remains intentionally unimplemented: kernel process hiding. This project does not include rootkit-style stealth behavior. Prefer explicit filtering inside this tool's own UI for legitimate workflow cleanup.
 
-### Memory Editing
-- Read/write any value type to process memory
-- Freeze values with directional modes (normal, increase only, decrease only, never increase, never decrease)
-- Address list with groups, descriptions, and editable values
-- Save/load cheat tables in CE-compatible `.CT` XML format
+## Build
 
-### Disassembler & Assembler
-- **Capstone** x86-64 disassembler with ELF symbol resolution (`libc.so!printf`)
-- **Keystone** x86-64 assembler (NASM syntax)
-- Memory browser with hex view + disassembly, dark themed
+### Dependencies
 
-### Auto-Assembler
-CE-compatible script engine:
+Ubuntu/Debian baseline:
+
+```bash
+sudo apt install build-essential cmake qt6-base-dev libcapstone-dev zlib1g-dev linux-headers-$(uname -r)
 ```
+
+Keystone is usually built from source:
+
+```bash
+git clone --depth 1 https://github.com/keystone-engine/keystone.git /tmp/keystone
+cmake -S /tmp/keystone -B /tmp/keystone/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_TARGETS_TO_BUILD=X86
+cmake --build /tmp/keystone/build -j$(nproc)
+sudo cmake --install /tmp/keystone/build
+sudo ldconfig
+```
+
+Lua 5.3 is expected from the adjacent Cheat Engine source tree:
+
+```bash
+cd "../Cheat Engine/lua53/lua53"
+make linux MYCFLAGS="-fPIC"
+cd ../../../cecore
+```
+
+### Compile
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+```
+
+Optional kernel helper:
+
+```bash
+make -C /lib/modules/$(uname -r)/build M=$PWD/kernel modules
+sudo insmod kernel/cecore_kmod.ko
+sudo rmmod cecore_kmod
+make -C /lib/modules/$(uname -r)/build M=$PWD/kernel clean
+```
+
+## Run
+
+```bash
+# GUI
+sudo LD_LIBRARY_PATH=build build/cheatengine
+
+# CLI
+sudo LD_LIBRARY_PATH=build build/cescan --help
+
+# Speedhack example
+CE_SPEED=2.0 LD_PRELOAD=build/libspeedhack.so ./game
+```
+
+## Validation
+
+The current regression pass used during development is:
+
+```bash
+cmake --build build -j$(nproc)
+./build/cecore_test
+./build/cescan --help
+git diff --check
+make -C /lib/modules/$(uname -r)/build M=$PWD/kernel modules
+make -C /lib/modules/$(uname -r)/build M=$PWD/kernel clean
+```
+
+Known warning: Qt may emit `QMenu::addAction` deprecation warnings during GUI builds.
+
+## CLI Reference
+
+```text
+cescan list                          List all processes
+cescan scan <pid> [options]          Scan process memory
+cescan read <pid> <addr> [size]      Hex dump memory
+cescan write <pid> <addr> <val>      Write a typed value
+cescan disasm <pid> <addr> [count]   Disassemble instructions
+cescan modules <pid>                 List loaded modules
+cescan regions <pid>                 List memory regions
+```
+
+Common scan options include:
+
+```text
+--type byte|i16|i32|i64|pointer|float|double|string|unicode|aob|binary|all|grouped|custom
+--value <value>
+--value2 <value>
+--compare exact|greater|less|between|changed|unchanged|increased|decreased|unknown|samefirst
+--encoding <iconv-name>
+--rounding exact|rounded|truncated|extreme
+--percent <pct>
+--percent2 <pct>
+--previous <result-dir>
+--writable
+```
+
+## Auto-Assembler Example
+
+```asm
 [ENABLE]
 alloc(newmem, 1024)
 label(returnhere)
 
 newmem:
+  {$try}
+  assert(game+1234, 48 89 45 10)
   mov dword [rax+10], 999
+  {$except}
+  nop 5
+  {$endtry}
   jmp returnhere
 
 game+1234:
@@ -56,163 +150,41 @@ game+1234:
 dealloc(newmem)
 ```
 
-Supports: `alloc`, `dealloc`, `label`, `define`, `registersymbol`, `aobscan`, `aobscanmodule`, `assert`, `fullaccess`, `createthread`, `include`, `reassemble`, `readmem`, `loadbinary`, `db`/`dw`/`dd`/`dq`, `[ENABLE]`/`[DISABLE]` sections.
-
-### Pointer Scanner
-Find stable pointer chains to dynamic addresses:
-```
-$ sudo cescan pointerscan <pid> 0x7f1234 4 2048
-Found 130 pointer paths:
-  [game+4048]+0x20  -> 0x7f1234
-  [[libc.so.6+202e20]+0x10]+0x20  -> 0x7f1234
-```
-
-### Debugger
-- Hardware breakpoints (DR0-DR3) for execute, read, write, access
-- **"Find what accesses this address"** — logs all instructions reading an address
-- **"Find what writes to this address"** — logs all instructions modifying an address
-- **Break and trace** — single-step N instructions, log each with full register state
-- Conditional breakpoints (Lua expressions)
-- Breakpoint list manager
-
-### Lua 5.3 Scripting
-55+ CE-compatible functions:
-```lua
--- Read/write memory
-local health = readInteger(0x7f1234)
-writeInteger(0x7f1234, 999)
-
--- Create custom GUI
-local f = createForm()
-f.Caption = "My Trainer"
-local btn = createButton(f)
-btn.Caption = "Infinite Health"
-btn.OnClick = function() writeInteger(healthAddr, 999) end
-f:show()
-
--- Scan memory
-local ms = createMemScan()
-ms:firstScan(soExactValue, vtDword, "100")
-print("Found: " .. ms:getFoundCount())
-
--- Grouped/custom scans
-ms:firstScan(soExactValue, vtGrouped, "i32:1337@0;float:2.5@4;byte:66@8")
-ms:firstScan(soCustom, vtDword,
-  "local b1,b2,b3,b4=string.byte(current,1,4); return b1==0xCD and b2==0xAB and b3==0x34 and b4==0x12")
-```
-
-### Code Analysis
-- Module dissection (find all calls, jumps, string references)
-- Code cave scanner (find unused regions for injection)
-- Referenced strings/functions enumeration
-
-### Additional Features
-- **.so injection** via ptrace + dlopen
-- **Speedhack** — LD_PRELOAD library intercepting `clock_gettime`/`nanosleep`
-- **Trainer generator** — compile standalone C trainers from cheat tables
-- **Plugin system** — load `.so` plugins via dlopen
-- **Structure dissector** — view memory as struct fields with auto-detection
-- **Dark theme** (Catppuccin Mocha)
-
-## Build
-
-### Dependencies
-
-```bash
-# Ubuntu/Debian
-sudo apt install build-essential cmake qt6-base-dev libcapstone-dev libreadline-dev
-
-# Keystone assembler (not in apt — build from source)
-git clone --depth 1 https://github.com/keystone-engine/keystone.git /tmp/keystone
-cd /tmp/keystone && mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_TARGETS_TO_BUILD="X86" ..
-make -j$(nproc) && sudo make install && sudo ldconfig
-```
-
-### Compile
-
-```bash
-# Build Lua 5.3
-cd "Cheat Engine/lua53/lua53" && make linux MYCFLAGS="-fPIC" && cd ../../..
-
-# Build cecore
-cd cecore
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-```
-
-### Run
-
-```bash
-# GUI (needs root for process_vm_readv)
-sudo LD_LIBRARY_PATH=build build/cheatengine
-
-# CLI
-sudo LD_LIBRARY_PATH=build build/cescan --help
-
-# Speedhack (2x speed)
-CE_SPEED=2.0 LD_PRELOAD=build/libspeedhack.so ./game
-```
-
-## CLI Reference
-
-```
-cescan list                              List all processes
-cescan scan <pid> --type i32 --value 100 First scan for int32 = 100
-cescan scan <pid> --type string --encoding ISO-8859-1 --value "é" Codepage string scan
-cescan scan <pid> --type grouped --value "i32:100@0;float:1.5@4" Grouped scan
-cescan scan <pid> --type custom --value-size 4 --value "local b1,b2,b3,b4=string.byte(current,1,4); return b1==0xCD and b2==0xAB and b3==0x34 and b4==0x12" Custom Lua formula scan
-cescan scan <pid> --type aob --value "7F 45 ?? 46"  AOB scan with wildcards
-cescan read <pid> <addr> [size]          Hex dump memory
-cescan write <pid> <addr> <val> --type i32  Write value
-cescan disasm <pid> <addr> [count]       Disassemble with symbols
-cescan symbols <pid>                     List ELF symbols
-cescan modules <pid>                     List loaded modules
-cescan regions <pid>                     List memory regions
-cescan pointerscan <pid> <addr> [depth]  Find pointer chains
-cescan asm <pid> script.cea              Run auto-assembler script
-```
-
 ## Architecture
 
-```
-cecore/ (9,120 lines, 72 files)
-├── core/           types, auto-assembler, expression parser, cheat tables, trainer
-├── platform/linux/ process_vm_readv, ptrace, .so injection
-├── arch/           Capstone disassembler, Keystone assembler
-├── scanner/        multi-threaded memory scanner, pointer scanner
-├── symbols/        ELF symbol resolver
-├── debug/          breakpoint manager, code finder, tracer
-├── analysis/       code dissection, code caves
-├── scripting/      Lua 5.3 engine + CE API + Qt GUI bindings
-├── plugins/        .so plugin loader, speedhack
-├── gui/            Qt6 (15 windows, dark theme)
+```text
+cecore/
+├── analysis/       code analysis, managed runtime helpers, structures
+├── arch/           Capstone disassembler and Keystone assembler wrappers
 ├── cli/            cescan command-line tool
-└── packaging/      AppImage, .desktop
+├── core/           types, auto-assembler, expressions, tables, trainers
+├── debug/          breakpoint manager, debug session, tracing, GDB remote
+├── gui/            Qt6 application windows and overlay
+├── kernel/         optional cecore_kmod privileged helper
+├── packaging/      desktop/AppImage helpers
+├── platform/       network compression, Vulkan layer helpers
+├── platform/linux/ process API, ptrace, injector, ceserver, kernel client
+├── plugins/        plugin loader and speedhack
+├── scanner/        memory scanner and pointer scanner
+├── scripting/      Lua engine and bindings
+├── symbols/        ELF and kernel symbol resolvers
+└── test/           regression harness
 ```
 
-## Tech Stack
+## Kernel Helper Scope
 
-- **C++23** (GCC 13+)
-- **Qt6** (GUI)
-- **CMake** (build system)
-- **Capstone** (disassembly)
-- **Keystone** (assembly)
-- **Lua 5.3** (scripting)
-- **Linux APIs**: `process_vm_readv`/`writev`, `ptrace`, `/proc` filesystem
+`kernel/cecore_kmod.c` is optional. It exposes explicit, CAP_SYS_ADMIN-gated ioctls through `/dev/cecore` for:
 
-## vs Original Cheat Engine
+- target process memory read/write
+- physical-address read/write via page-sized `ioremap` windows
+- virtual-to-physical translation for a target process page
 
-| | Original CE | This Project |
-|---|---|---|
-| Language | Pascal (400K lines) | C++23 (9K lines) |
-| Platform | Windows (Wine on Linux) | Native Linux |
-| GUI | LCL/GTK2 | Qt6 |
-| Kernel driver | Windows DBK32 | ptrace + /proc (no driver needed) |
-| Memory access | ReadProcessMemory API | process_vm_readv (faster) |
-| Disassembler | Hand-coded (29K lines) | Capstone (500 lines wrapper) |
-| Assembler | Hand-coded (10K lines) | Keystone (90 lines wrapper) |
+It does not hide processes, modules, files, sockets, or kernel objects.
+
+## Vulkan Overlay Scope
+
+The build produces `libce_vulkan_overlay_layer.so`, an explicit Vulkan loader layer. The cecore helper API can generate the JSON manifest and launch environment for `VK_LAYER_CE_linux_overlay`. The current layer is an injection/dispatch foundation; the X11 overlay window provides the visible OSD/crosshair path.
 
 ## License
 
-Based on [Cheat Engine](https://github.com/cheat-engine/cheat-engine) by Dark Byte.
+Inspired by [Cheat Engine](https://github.com/cheat-engine/cheat-engine) by Dark Byte. Check upstream licensing before distributing derived assets or compatibility data.
