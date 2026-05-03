@@ -66,7 +66,7 @@
 - [x] `include(file.cea)` — script inclusion
 - [x] `reassemble(address)` — disassemble + reassemble for relocation
 - [x] `struct name ... ends` — structure definitions with size calculation
-- [ ] `{$try} ... {$except}` — exception handling regions
+- [x] `{$try} ... {$except}` — exception handling regions
 - [x] `loadlibrary(path)` — .so injection from scripts
 - [x] `loadbinary(address, file)` — binary file loading
 - [x] Forward label resolution with NOP padding (multi-pass)
@@ -92,6 +92,8 @@ Note: auto-assembler `struct ... ends`/`endstruct` blocks now calculate field of
 Note: auto-assembler forward labels now resolve through a bounded multi-pass sizing step before injection, so jumps over later NOP/data padding assemble with stable target addresses.
 
 Note: auto-assembler `createthread` and `createthreadandwait` now execute injected entry points through ptrace-driven remote `pthread_create`, using `pthread_tryjoin_np` for timeout-aware waits and detaching async workers.
+
+Note: auto-assembler scripts now support `{$try}`, `{$except}`, and `{$endtry}` guarded regions. Guarded branches are selected before label resolution and writes; failed guarded assertions fall through to the except block, with malformed regions rejected by syntax checks.
 
 Note: break-and-trace has regression coverage for start-address breakpoints followed by fixed-count single stepping with decoded instruction logging.
 

@@ -91,6 +91,15 @@ private:
         const std::vector<Alloc>& allocs, std::vector<Label>& labels,
         const std::vector<Define>& defines, ProcessHandle& proc,
         std::string& error);
+    bool selectTryExceptBranches(const std::vector<std::string>& asmLines,
+        std::vector<std::string>& selectedLines,
+        const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
+        const std::vector<Define>& defines, ProcessHandle* proc,
+        std::vector<std::string>& log, std::string& error) const;
+    bool tryBranchCanExecute(const std::vector<std::string>& branchLines,
+        const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
+        const std::vector<Define>& defines, ProcessHandle* proc,
+        std::string& reason) const;
 
     // ── Global symbol table ──
     std::unordered_map<std::string, uintptr_t> globalSymbols_;

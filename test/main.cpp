@@ -1019,6 +1019,59 @@ static void test_autoassembler_nop_fillmem(pid_t pid) {
     printf("  nop/fillmem: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_autoassembler_try_except(pid_t pid) {
+    printf("\n── Test: AutoAssembler try/except ──\n");
+
+    LinuxProcessHandle proc(pid);
+    auto allocResult = proc.allocate(4096, MemProt::All);
+    if (!allocResult) {
+        printf("  try/except regions: FAILED\n");
+        return;
+    }
+    uintptr_t addr = *allocResult;
+    uint8_t initial[] = {0xaa, 0xbb};
+    proc.write(addr, initial, sizeof(initial));
+
+    char script[512];
+    snprintf(script, sizeof(script),
+        "[ENABLE]\n"
+        "%lx:\n"
+        "{$try}\n"
+        "assert(%lx, AA)\n"
+        "db 11\n"
+        "{$except}\n"
+        "db 22\n"
+        "{$endtry}\n"
+        "%lx:\n"
+        "{$try}\n"
+        "assert(%lx, AA)\n"
+        "db 33\n"
+        "{$except}\n"
+        "db 44\n"
+        "{$endtry}\n",
+        addr, addr, addr + 1, addr + 1);
+
+    AutoAssembler aa;
+    auto result = aa.execute(proc, script);
+    uint8_t actual[] = {0, 0};
+    proc.read(addr, actual, sizeof(actual));
+
+    auto malformed = aa.check("[ENABLE]\n{$try}\nnop\n{$except}\nnop\n");
+    bool sawExceptLog = std::any_of(result.log.begin(), result.log.end(), [](const std::string& line) {
+        return line.find("selected {$except} block") != std::string::npos;
+    });
+
+    bool ok = result.success &&
+        actual[0] == 0x11 &&
+        actual[1] == 0x44 &&
+        sawExceptLog &&
+        !malformed.success &&
+        malformed.error.find("Missing {$endtry}") != std::string::npos;
+
+    proc.free(addr, 4096);
+    printf("  try/except regions: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_autoassembler_forward_labels(pid_t pid) {
     printf("\n── Test: AutoAssembler forward labels ──\n");
 
@@ -2639,6 +2692,7 @@ int main(int argc, char* argv[]) {
     test_autoassembler_dealloc(targetPid);
     test_autoassembler_data_directive_widths(targetPid);
     test_autoassembler_nop_fillmem(targetPid);
+    test_autoassembler_try_except(targetPid);
     test_autoassembler_forward_labels(targetPid);
     test_autoassembler_create_thread(targetPid);
     test_autoassembler_ds(targetPid);

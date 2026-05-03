@@ -443,6 +443,19 @@ bool AutoAssembler::parseLine(const std::string& rawLine,
 
     auto upper = toUpper(line);
 
+    if (upper == "{$TRY}") {
+        asmLines.push_back("__TRY_BEGIN__");
+        return true;
+    }
+    if (upper == "{$EXCEPT}") {
+        asmLines.push_back("__TRY_EXCEPT__");
+        return true;
+    }
+    if (upper == "{$ENDTRY}") {
+        asmLines.push_back("__TRY_END__");
+        return true;
+    }
+
     // ALLOC(name, size [, preferred])
     if (startsWith(upper, "ALLOC(") && line.back() == ')') {
         auto args = line.substr(6, line.size() - 7);
@@ -1062,6 +1075,132 @@ bool AutoAssembler::resolveForwardLabels(const std::vector<std::string>& asmLine
     return false;
 }
 
+bool AutoAssembler::tryBranchCanExecute(const std::vector<std::string>& branchLines,
+    const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
+    const std::vector<Define>& defines, ProcessHandle* proc,
+    std::string& reason) const
+{
+    reason.clear();
+    if (!proc)
+        return true;
+
+    for (const auto& rawLine : branchLines) {
+        auto line = trim(rawLine);
+        if (startsWith(line, "__ASSERT__:")) {
+            auto args = line.substr(11);
+            auto comma = args.find(',');
+            if (comma == std::string::npos) {
+                reason = "ASSERT requires address and bytes";
+                return false;
+            }
+
+            auto addrExpr = trim(args.substr(0, comma));
+            auto bytesStr = trim(args.substr(comma + 1));
+            auto addr = resolveAddress(addrExpr, allocs, labels, defines);
+            if (!addr) {
+                reason = "Invalid ASSERT target: " + addrExpr;
+                return false;
+            }
+
+            if (!bytesStr.empty() && bytesStr.front() == '"') bytesStr = bytesStr.substr(1);
+            if (!bytesStr.empty() && bytesStr.back() == '"') bytesStr.pop_back();
+
+            ScanConfig pattern;
+            pattern.parseAOB(bytesStr);
+            if (pattern.byteArray.empty()) {
+                reason = "ASSERT has no bytes: " + bytesStr;
+                return false;
+            }
+
+            std::vector<uint8_t> current(pattern.byteArray.size());
+            auto readResult = proc->read(addr, current.data(), current.size());
+            if (!readResult || *readResult < current.size()) {
+                reason = "ASSERT read failed at " + addrExpr;
+                return false;
+            }
+
+            for (size_t i = 0; i < pattern.byteArray.size(); ++i) {
+                if (i < pattern.byteArrayMask.size() && !pattern.byteArrayMask[i])
+                    continue;
+                if (current[i] != pattern.byteArray[i]) {
+                    reason = "ASSERT failed at " + addrExpr + "+" + std::to_string(i);
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+bool AutoAssembler::selectTryExceptBranches(const std::vector<std::string>& asmLines,
+    std::vector<std::string>& selectedLines,
+    const std::vector<Alloc>& allocs, const std::vector<Label>& labels,
+    const std::vector<Define>& defines, ProcessHandle* proc,
+    std::vector<std::string>& log, std::string& error) const
+{
+    selectedLines.clear();
+
+    for (size_t i = 0; i < asmLines.size(); ++i) {
+        auto line = trim(asmLines[i]);
+        if (line != "__TRY_BEGIN__") {
+            if (line == "__TRY_EXCEPT__" || line == "__TRY_END__") {
+                error = "Unexpected {$except}/{$endtry} without {$try}";
+                return false;
+            }
+            selectedLines.push_back(asmLines[i]);
+            continue;
+        }
+
+        size_t exceptIndex = asmLines.size();
+        size_t endIndex = asmLines.size();
+        int depth = 1;
+        for (size_t j = i + 1; j < asmLines.size(); ++j) {
+            auto marker = trim(asmLines[j]);
+            if (marker == "__TRY_BEGIN__") {
+                ++depth;
+            } else if (marker == "__TRY_END__") {
+                --depth;
+                if (depth == 0) {
+                    endIndex = j;
+                    break;
+                }
+            } else if (marker == "__TRY_EXCEPT__" && depth == 1) {
+                exceptIndex = j;
+            }
+        }
+
+        if (endIndex == asmLines.size()) {
+            error = "Missing {$endtry} for {$try} block";
+            return false;
+        }
+        if (exceptIndex == asmLines.size() || exceptIndex > endIndex) {
+            error = "Missing {$except} for {$try} block";
+            return false;
+        }
+
+        std::vector<std::string> tryLines(asmLines.begin() + i + 1, asmLines.begin() + exceptIndex);
+        std::vector<std::string> exceptLines(asmLines.begin() + exceptIndex + 1, asmLines.begin() + endIndex);
+        std::vector<std::string> selectedBranch;
+
+        std::string reason;
+        if (tryBranchCanExecute(tryLines, allocs, labels, defines, proc, reason)) {
+            if (!selectTryExceptBranches(tryLines, selectedBranch, allocs, labels, defines, proc, log, error))
+                return false;
+            log.push_back("TRY: selected guarded block");
+        } else {
+            if (!selectTryExceptBranches(exceptLines, selectedBranch, allocs, labels, defines, proc, log, error))
+                return false;
+            log.push_back("TRY: selected {$except} block (" + reason + ")");
+        }
+
+        selectedLines.insert(selectedLines.end(), selectedBranch.begin(), selectedBranch.end());
+        i = endIndex;
+    }
+
+    return true;
+}
+
 // ── Symbol management ──
 
 void AutoAssembler::registerSymbol(const std::string& name, uintptr_t address) {
@@ -1158,6 +1297,11 @@ AutoAsmResult AutoAssembler::execute(ProcessHandle& proc, const std::string& scr
             return result;
         }
     }
+
+    std::vector<std::string> selectedAsmLines;
+    if (!selectTryExceptBranches(asmLines, selectedAsmLines, allocs, labels, defines, &proc, result.log, result.error))
+        return result;
+    asmLines = std::move(selectedAsmLines);
 
     if (!resolveForwardLabels(asmLines, allocs, labels, defines, proc, result.error))
         return result;
@@ -1705,6 +1849,11 @@ AutoAsmResult AutoAssembler::check(const std::string& script) {
         if (!parseLine(line, allocs, labels, defines, registeredSymbols, asmLines, result.log, nullptr, result.error))
             return result;
     }
+
+    std::vector<std::string> selectedAsmLines;
+    if (!selectTryExceptBranches(asmLines, selectedAsmLines, allocs, labels, defines, nullptr, result.log, result.error))
+        return result;
+    asmLines = std::move(selectedAsmLines);
 
     result.success = true;
     result.log.push_back("Syntax OK: " + std::to_string(allocs.size()) + " allocs, " +
