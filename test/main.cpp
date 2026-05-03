@@ -354,6 +354,54 @@ static void test_managed_runtime_detection() {
         (monoOk && coreClrOk && none.empty()) ? "OK" : "FAILED");
 }
 
+static void test_managed_object_enumeration() {
+    printf("\n── Test: Managed object enumeration ──\n");
+
+    constexpr uintptr_t metadataBase = 0x500000;
+    constexpr uintptr_t heapBase = 0x800000;
+    std::vector<uint8_t> metadata(0x200, 0);
+    std::vector<uint8_t> heap(0x200, 0);
+
+    uintptr_t playerType = metadataBase + 0x40;
+    uintptr_t inventoryType = metadataBase + 0x90;
+    uintptr_t nativePointer = 0x12345678;
+    std::memcpy(heap.data() + 0x20, &playerType, sizeof(playerType));
+    std::memcpy(heap.data() + 0x80, &inventoryType, sizeof(inventoryType));
+    std::memcpy(heap.data() + 0xc0, &nativePointer, sizeof(nativePointer));
+
+    FakeProcessHandle proc({
+        {{metadataBase, metadata.size(), MemProt::Read, MemType::Image, MemState::Committed, "/opt/dotnet/System.Private.CoreLib.dll"}, metadata},
+        {{heapBase, heap.size(), MemProt::ReadWrite, MemType::Private, MemState::Committed, "[managed heap]"}, heap},
+    }, {
+        {metadataBase, metadata.size(), "System.Private.CoreLib.dll", "/opt/dotnet/System.Private.CoreLib.dll", true},
+    });
+
+    ManagedObjectEnumerationConfig config;
+    config.runtimeKind = ManagedRuntimeKind::CoreCLR;
+    auto objects = enumerateManagedObjects(proc, config);
+
+    config.heapStart = heapBase + 0x70;
+    config.heapEnd = heapBase + 0x100;
+    config.maxObjects = 1;
+    auto bounded = enumerateManagedObjects(proc, config);
+
+    bool playerOk = std::any_of(objects.begin(), objects.end(), [&](const ManagedObjectInfo& object) {
+        return object.address == heapBase + 0x20 &&
+            object.typeHandle == playerType &&
+            object.runtimeKind == ManagedRuntimeKind::CoreCLR &&
+            object.regionPath == "[managed heap]";
+    });
+    bool inventoryOk = std::any_of(objects.begin(), objects.end(), [&](const ManagedObjectInfo& object) {
+        return object.address == heapBase + 0x80 && object.typeHandle == inventoryType;
+    });
+    bool boundedOk = bounded.size() == 1 &&
+        bounded.front().address == heapBase + 0x80 &&
+        bounded.front().typeHandle == inventoryType;
+
+    printf("  object headers: %s\n",
+        (objects.size() == 2 && playerOk && inventoryOk && boundedOk) ? "OK" : "FAILED");
+}
+
 static void test_gdb_remote_client() {
     printf("\n── Test: GDB remote client ──\n");
 
@@ -2383,6 +2431,7 @@ int main(int argc, char* argv[]) {
     test_trainer_generation();
     test_code_analysis_references();
     test_managed_runtime_detection();
+    test_managed_object_enumeration();
     test_gdb_remote_client();
     test_ceserver_client();
     test_network_compression();

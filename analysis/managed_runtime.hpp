@@ -5,6 +5,7 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 
 namespace ce {
 
@@ -22,6 +23,27 @@ struct ManagedRuntimeInfo {
     size_t size = 0;
 };
 
+struct ManagedObjectInfo {
+    uintptr_t address = 0;
+    uintptr_t typeHandle = 0;
+    size_t size = 0;                  // 0 when the runtime-specific size is not known
+    std::optional<ManagedRuntimeKind> runtimeKind;
+    std::string regionPath;
+};
+
+struct ManagedObjectEnumerationConfig {
+    std::optional<ManagedRuntimeKind> runtimeKind;
+    uintptr_t heapStart = 0;
+    uintptr_t heapEnd = 0;            // 0 means no upper bound
+    size_t pointerSize = 0;           // 0 means infer from ProcessHandle::is64bit()
+    size_t maxObjects = 100000;
+    bool writableRegionsOnly = true;
+    std::vector<MemoryRegion> typeHandleRanges;
+};
+
 std::vector<ManagedRuntimeInfo> detectManagedRuntimes(ProcessHandle& proc);
+std::vector<ManagedObjectInfo> enumerateManagedObjects(
+    ProcessHandle& proc,
+    const ManagedObjectEnumerationConfig& config = {});
 
 } // namespace ce
