@@ -295,7 +295,7 @@ Note: managed method symbols with resolved JIT/native entry addresses can now be
 - [x] Linux kernel module for privileged operations
 - [x] Physical memory read/write (bypass ptrace restrictions)
 - [ ] Process hiding
-- [ ] Page table manipulation
+- [x] Page table manipulation
 - [x] Kernel symbol resolution
 
 Note: kernel symbol resolution now has a `/proc/kallsyms` parser with raw and module-qualified lookup, address-to-symbol+offset resolution, module symbol handling, and zero-address filtering for restricted kallsyms output.
@@ -303,6 +303,8 @@ Note: kernel symbol resolution now has a `/proc/kallsyms` parser with raw and mo
 Note: an optional out-of-tree `cecore_kmod` kernel helper now builds against the installed kernel headers and exposes CAP_SYS_ADMIN-gated ioctls for privileged target process memory access, with a user-space client wrapper and regression coverage for ioctl wiring.
 
 Note: the kernel helper now also exposes CAP_SYS_ADMIN-gated physical-address read/write ioctls backed by page-sized `ioremap` windows, with matching user-space wrapper methods and kernel-header build validation.
+
+Note: page-table support is implemented as a CAP_SYS_ADMIN-gated virtual-to-physical translation ioctl for target process addresses, returning page size and offset for use with the physical-memory path. It intentionally avoids stealth PTE mutation.
 
 ---
 

@@ -8,6 +8,13 @@
 
 namespace ce::os {
 
+struct VirtualAddressTranslation {
+    uintptr_t virtualAddress = 0;
+    uintptr_t physicalAddress = 0;
+    size_t pageSize = 0;
+    size_t pageOffset = 0;
+};
+
 class KernelDriverClient {
 public:
     KernelDriverClient() = default;
@@ -24,6 +31,7 @@ public:
     Result<size_t> writeProcessMemory(pid_t pid, uintptr_t address, const void* buffer, size_t size);
     Result<size_t> readPhysicalMemory(uintptr_t physicalAddress, void* buffer, size_t size);
     Result<size_t> writePhysicalMemory(uintptr_t physicalAddress, const void* buffer, size_t size);
+    Result<VirtualAddressTranslation> translateVirtualAddress(pid_t pid, uintptr_t virtualAddress);
 
 private:
     Result<size_t> accessProcessMemory(

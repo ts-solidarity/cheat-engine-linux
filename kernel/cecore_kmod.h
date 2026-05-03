@@ -30,6 +30,15 @@ struct cecore_kmod_phys_request {
     __u64 bytes_transferred;
 };
 
+struct cecore_kmod_translate_request {
+    __u32 pid;
+    __u32 flags;
+    __u64 virtual_address;
+    __u64 physical_address;
+    __u64 page_size;
+    __u64 page_offset;
+ };
+
 #define CECORE_KMOD_IOC_PING _IO(CECORE_KMOD_IOC_MAGIC, 0)
 #define CECORE_KMOD_IOC_READ_PROCESS_VM \
     _IOWR(CECORE_KMOD_IOC_MAGIC, 1, struct cecore_kmod_mem_request)
@@ -39,3 +48,5 @@ struct cecore_kmod_phys_request {
     _IOWR(CECORE_KMOD_IOC_MAGIC, 3, struct cecore_kmod_phys_request)
 #define CECORE_KMOD_IOC_WRITE_PHYSICAL \
     _IOWR(CECORE_KMOD_IOC_MAGIC, 4, struct cecore_kmod_phys_request)
+#define CECORE_KMOD_IOC_TRANSLATE_VA \
+    _IOWR(CECORE_KMOD_IOC_MAGIC, 5, struct cecore_kmod_translate_request)

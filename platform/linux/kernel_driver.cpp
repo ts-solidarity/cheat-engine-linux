@@ -64,6 +64,29 @@ Result<size_t> KernelDriverClient::writePhysicalMemory(
         size);
 }
 
+Result<VirtualAddressTranslation> KernelDriverClient::translateVirtualAddress(
+    pid_t pid,
+    uintptr_t virtualAddress) {
+    if (fd_ < 0)
+        return std::unexpected(std::make_error_code(std::errc::bad_file_descriptor));
+    if (virtualAddress == 0)
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+
+    cecore_kmod_translate_request req{};
+    req.pid = static_cast<__u32>(pid);
+    req.virtual_address = virtualAddress;
+
+    if (::ioctl(fd_, CECORE_KMOD_IOC_TRANSLATE_VA, &req) < 0)
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+
+    return VirtualAddressTranslation{
+        static_cast<uintptr_t>(req.virtual_address),
+        static_cast<uintptr_t>(req.physical_address),
+        static_cast<size_t>(req.page_size),
+        static_cast<size_t>(req.page_offset),
+    };
+}
+
 Result<size_t> KernelDriverClient::accessProcessMemory(
     unsigned long request,
     pid_t pid,

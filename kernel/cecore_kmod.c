@@ -136,10 +136,52 @@ static ssize_t cecore_access_physical(struct cecore_kmod_phys_request *req, int 
     return done ? (ssize_t)done : ret;
 }
 
+static int cecore_translate_va(struct cecore_kmod_translate_request *req)
+{
+    struct task_struct *task;
+    struct mm_struct *mm;
+    struct page *page = NULL;
+    unsigned long address;
+    long pinned;
+    int ret = 0;
+
+    if (!req->pid || !req->virtual_address)
+        return -EINVAL;
+
+    rcu_read_lock();
+    task = get_pid_task(find_vpid(req->pid), PIDTYPE_PID);
+    rcu_read_unlock();
+    if (!task)
+        return -ESRCH;
+
+    mm = get_task_mm(task);
+    put_task_struct(task);
+    if (!mm)
+        return -EINVAL;
+
+    address = (unsigned long)(req->virtual_address & PAGE_MASK);
+    mmap_read_lock(mm);
+    pinned = get_user_pages_remote(mm, address, 1, FOLL_GET, &page, NULL);
+    mmap_read_unlock(mm);
+    mmput(mm);
+
+    if (pinned != 1 || !page) {
+        ret = pinned < 0 ? pinned : -EFAULT;
+        return ret;
+    }
+
+    req->page_size = PAGE_SIZE;
+    req->page_offset = offset_in_page(req->virtual_address);
+    req->physical_address = page_to_phys(page) + req->page_offset;
+    put_page(page);
+    return 0;
+}
+
 static long cecore_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct cecore_kmod_mem_request req;
     struct cecore_kmod_phys_request phys_req;
+    struct cecore_kmod_translate_request translate_req;
     ssize_t result;
 
     (void)file;
@@ -158,6 +200,18 @@ static long cecore_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         if (copy_to_user((void __user *)arg, &phys_req, sizeof(phys_req)))
             return -EFAULT;
         return result < 0 ? result : 0;
+    }
+
+    if (cmd == CECORE_KMOD_IOC_TRANSLATE_VA) {
+        result = cecore_check_privilege();
+        if (result)
+            return result;
+        if (copy_from_user(&translate_req, (void __user *)arg, sizeof(translate_req)))
+            return -EFAULT;
+        result = cecore_translate_va(&translate_req);
+        if (copy_to_user((void __user *)arg, &translate_req, sizeof(translate_req)))
+            return -EFAULT;
+        return result;
     }
 
     if (cmd != CECORE_KMOD_IOC_READ_PROCESS_VM &&
