@@ -277,13 +277,15 @@ Note: pointer scans now support worker shard configs for distributed/static-root
 - [x] CoreCLR/Mono runtime detection in target
 - [x] Managed object enumeration
 - [x] .NET type information extraction
-- [ ] Managed method breakpoints
+- [x] Managed method breakpoints
 
 Note: process module inspection now detects Mono and CoreCLR runtimes from mapped runtime libraries, with regression coverage for mixed managed/native module lists.
 
 Note: managed runtime analysis can now enumerate candidate Mono/CoreCLR heap objects by scanning writable heap regions for object headers whose type handles point into known managed metadata/runtime ranges, with bounds and max-result controls covered by regression tests.
 
 Note: managed type extraction now deduplicates object type handles and resolves type names/namespaces from configurable metadata string-pointer offsets, with regression coverage for CoreCLR-style metadata records.
+
+Note: managed method symbols with resolved JIT/native entry addresses can now be bridged into software execute breakpoints with method metadata, conditions, one-shot behavior, and thread filters preserved in the breakpoint manager.
 
 **3.5 Kernel Module (optional)**
 - [ ] Linux kernel module for privileged operations

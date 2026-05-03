@@ -155,7 +155,7 @@ int BreakpointManager::add(const Breakpoint& bp) {
     std::lock_guard lock(mutex_);
     Breakpoint b = bp;
     b.id = nextId_++;
-    if (b.hwRegister < 0)
+    if (b.method == BpMethod::Hardware && b.hwRegister < 0)
         b.hwRegister = findFreeHwRegister();
     breakpoints_.push_back(b);
     return b.id;
@@ -201,6 +201,7 @@ int BreakpointManager::findFreeHwRegister() const {
 bool BreakpointManager::applyToThread(Debugger& dbg, pid_t tid) {
     std::lock_guard lock(mutex_);
     for (auto& bp : breakpoints_) {
+        if (bp.method != BpMethod::Hardware) continue;
         if (!bp.enabled || bp.hwRegister < 0) continue;
         if (bp.threadFilter != 0 && bp.threadFilter != tid) continue;
 
@@ -229,6 +230,7 @@ bool BreakpointManager::applyToThread(Debugger& dbg, pid_t tid) {
 bool BreakpointManager::removeFromThread(Debugger& dbg, pid_t tid) {
     std::lock_guard lock(mutex_);
     for (auto& bp : breakpoints_) {
+        if (bp.method != BpMethod::Hardware) continue;
         if (bp.hwRegister >= 0)
             dbg.removeBreakpoint(tid, bp.hwRegister);
     }

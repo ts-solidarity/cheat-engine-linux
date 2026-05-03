@@ -14,6 +14,7 @@
 #include "debug/tracer.hpp"
 #include "debug/debug_session.hpp"
 #include "debug/gdb_remote.hpp"
+#include "debug/managed_breakpoint.hpp"
 #include "scripting/lua_engine.hpp"
 
 #include <cstdio>
@@ -1524,6 +1525,50 @@ static void test_thread_filtered_breakpoints() {
     printf("  TID filter: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_managed_method_breakpoints() {
+    printf("\n── Test: Managed method breakpoints ──\n");
+
+    BreakpointManager mgr;
+    ManagedMethodInfo method;
+    method.type.typeHandle = 0x510040;
+    method.type.name = "Player";
+    method.type.namespaceName = "Game.Entities";
+    method.type.runtimeKind = ManagedRuntimeKind::CoreCLR;
+    method.methodName = "TakeDamage";
+    method.signature = "(int)";
+    method.metadataToken = 0x06000042;
+    method.nativeAddress = 0x7fff00102030;
+    method.nativeSize = 0x80;
+
+    ManagedMethodBreakpointOptions options;
+    options.oneShot = true;
+    options.threadFilter = 77;
+    options.condition = "rax == 10";
+    int id = addManagedMethodBreakpoint(mgr, method, options);
+
+    ManagedMethodInfo unresolved = method;
+    unresolved.nativeAddress = 0;
+    int unresolvedId = addManagedMethodBreakpoint(mgr, unresolved);
+
+    auto bps = mgr.list();
+    auto it = std::find_if(bps.begin(), bps.end(), [id](const Breakpoint& bp) {
+        return bp.id == id;
+    });
+
+    bool ok = id > 0 &&
+        unresolvedId == -1 &&
+        it != bps.end() &&
+        it->address == method.nativeAddress &&
+        it->method == BpMethod::Software &&
+        it->hwRegister == -1 &&
+        it->oneShot &&
+        it->threadFilter == 77 &&
+        it->condition == "rax == 10" &&
+        it->description == "Game.Entities.Player::TakeDamage(int) [token 0x6000042]";
+
+    printf("  JIT address bridge: %s\n", ok ? "OK" : "FAILED");
+}
+
 static void test_lua_file_aliases() {
     printf("\n── Test: Lua file aliases ──\n");
 
@@ -2519,6 +2564,7 @@ int main(int argc, char* argv[]) {
     test_breakpoint_conditions();
     test_one_shot_breakpoints();
     test_thread_filtered_breakpoints();
+    test_managed_method_breakpoints();
     test_lua_file_aliases();
     test_lua_local_memory();
     test_lua_autoassemble_check();
