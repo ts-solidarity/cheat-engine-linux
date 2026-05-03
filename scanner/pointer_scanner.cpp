@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <queue>
 #include <set>
+#include <stdexcept>
 
 namespace ce {
 
@@ -50,9 +51,26 @@ static bool isInRange(uintptr_t addr, const std::vector<MemoryRegion>& regions) 
     return false;
 }
 
+std::vector<PointerScanConfig> makePointerScanShards(const PointerScanConfig& base, size_t shardCount) {
+    if (shardCount == 0)
+        throw std::invalid_argument("pointer scan shard count must be greater than zero");
+
+    std::vector<PointerScanConfig> shards;
+    shards.reserve(shardCount);
+    for (size_t i = 0; i < shardCount; ++i) {
+        auto shard = base;
+        shard.shardIndex = i;
+        shard.shardCount = shardCount;
+        shards.push_back(shard);
+    }
+    return shards;
+}
+
 std::vector<PointerPath> PointerScanner::scan(ProcessHandle& proc, const PointerScanConfig& config) {
     cancelled_.store(false);
     progress_.store(0);
+    if (config.shardCount == 0 || config.shardIndex >= config.shardCount)
+        return {};
 
     auto regions = proc.queryRegions();
     auto modules = proc.modules();
@@ -63,6 +81,15 @@ std::vector<PointerPath> PointerScanner::scan(ProcessHandle& proc, const Pointer
             if (addr >= m.base && addr < m.base + m.size)
                 return &m;
         return nullptr;
+    };
+    auto isModuleRegion = [&](const MemoryRegion& region) {
+        for (const auto& module : modules) {
+            auto moduleEnd = module.base + module.size;
+            auto regionEnd = region.base + region.size;
+            if (region.base < moduleEnd && regionEnd > module.base)
+                return true;
+        }
+        return false;
     };
 
     // ── Phase 1: Build reverse pointer map ──
@@ -77,9 +104,18 @@ std::vector<PointerPath> PointerScanner::scan(ProcessHandle& proc, const Pointer
     size_t scanned = 0;
     std::vector<uint8_t> buf;
 
+    size_t staticRegionIndex = 0;
     for (auto& region : regions) {
         if (cancelled_.load()) break;
         if (!(region.protection & MemProt::Read)) continue;
+        bool moduleRegion = isModuleRegion(region);
+        size_t thisStaticRegionIndex = moduleRegion ? staticRegionIndex++ : 0;
+        if (config.staticOnly && config.shardCount > 1 && moduleRegion &&
+            (thisStaticRegionIndex % config.shardCount) != config.shardIndex) {
+            scanned += region.size;
+            progress_.store(totalMem == 0 ? 0.5f : 0.5f * scanned / totalMem);
+            continue;
+        }
 
         buf.resize(region.size);
         auto rr = proc.read(region.base, buf.data(), region.size);

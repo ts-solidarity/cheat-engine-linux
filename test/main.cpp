@@ -2,6 +2,7 @@
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "platform/linux/ceserver_client.hpp"
 #include "platform/network_compression.hpp"
+#include "scanner/pointer_scanner.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
 #include "core/trainer.hpp"
@@ -522,6 +523,56 @@ static void test_network_compression() {
         !badLevel &&
         !wrongSize;
     printf("  zlib round trip: %s\n", ok ? "OK" : "FAILED");
+}
+
+static void test_distributed_pointer_scan() {
+    printf("\n── Test: Distributed pointer scan ──\n");
+
+    constexpr uintptr_t moduleBase = 0x400000;
+    constexpr uintptr_t heapBase = 0x700000;
+    constexpr uintptr_t target = heapBase + 0x80;
+    std::vector<uint8_t> module(0x100, 0);
+    std::vector<uint8_t> heap(0x100, 0);
+
+    uintptr_t heapPointer = target - 0x20;
+    uintptr_t staticPointer = heapBase + 0x20;
+    std::memcpy(heap.data() + 0x20, &heapPointer, sizeof(heapPointer));
+    std::memcpy(module.data() + 0x10, &staticPointer, sizeof(staticPointer));
+
+    FakeProcessHandle proc({
+        {{moduleBase, module.size(), MemProt::Read, MemType::Image, MemState::Committed, "/tmp/game"}, module},
+        {{heapBase, heap.size(), MemProt::ReadWrite, MemType::Private, MemState::Committed, "[heap]"}, heap},
+    }, {
+        {moduleBase, module.size(), "game", "/tmp/game", true},
+    });
+
+    PointerScanConfig config;
+    config.targetAddress = target;
+    config.maxDepth = 3;
+    config.maxOffset = 0x100;
+
+    PointerScanner fullScanner;
+    auto full = fullScanner.scan(proc, config);
+
+    std::vector<PointerPath> merged;
+    for (auto shardConfig : makePointerScanShards(config, 2)) {
+        PointerScanner shardScanner;
+        auto shard = shardScanner.scan(proc, shardConfig);
+        merged.insert(merged.end(), shard.begin(), shard.end());
+    }
+
+    auto hasExpectedPath = [&](const std::vector<PointerPath>& paths) {
+        return std::any_of(paths.begin(), paths.end(), [](const PointerPath& path) {
+            return path.module == "game" &&
+                path.baseOffset == 0x10 &&
+                path.offsets == std::vector<int32_t>({0, 0x20});
+        });
+    };
+
+    bool ok = hasExpectedPath(full) &&
+        hasExpectedPath(merged) &&
+        merged.size() == full.size();
+    printf("  shard merge: %s\n", ok ? "OK" : "FAILED");
 }
 
 static void test_stack_trace_frame_walk() {
@@ -2335,6 +2386,7 @@ int main(int argc, char* argv[]) {
     test_gdb_remote_client();
     test_ceserver_client();
     test_network_compression();
+    test_distributed_pointer_scan();
     test_stack_trace_frame_walk();
     test_break_and_trace();
     test_exception_breakpoint();

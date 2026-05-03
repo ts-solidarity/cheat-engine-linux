@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <cstddef>
 
 namespace ce {
 
@@ -26,7 +27,12 @@ struct PointerScanConfig {
     bool      negativeOffsets = false;
     bool      alignedOnly = true;   // 8-byte aligned pointers only
     bool      staticOnly = true;    // Only save paths ending at static (module) addresses
+    size_t    shardIndex = 0;       // Worker shard for distributed scans
+    size_t    shardCount = 1;       // Total distributed workers
 };
+
+/// Build one config per worker. Merged results are equivalent to a full scan.
+std::vector<PointerScanConfig> makePointerScanShards(const PointerScanConfig& base, size_t shardCount);
 
 class PointerScanner {
 public:
