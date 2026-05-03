@@ -15,6 +15,7 @@
 #include "debug/debug_session.hpp"
 #include "debug/gdb_remote.hpp"
 #include "debug/managed_breakpoint.hpp"
+#include "symbols/kernel_symbols.hpp"
 #include "scripting/lua_engine.hpp"
 
 #include <cstdio>
@@ -24,6 +25,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <csignal>
 #include <thread>
 #include <arpa/inet.h>
@@ -1569,6 +1571,35 @@ static void test_managed_method_breakpoints() {
     printf("  JIT address bridge: %s\n", ok ? "OK" : "FAILED");
 }
 
+static void test_kernel_symbol_resolver() {
+    printf("\n── Test: Kernel symbol resolver ──\n");
+
+    std::istringstream kallsyms(
+        "0000000000000000 T hidden_by_kptr_restrict\n"
+        "ffffffff81000000 T startup_64\n"
+        "ffffffff81000120 t secondary_startup_64\n"
+        "ffffffffc0201000 t module_entry [testmod]\n"
+        "ffffffffc0201100 T exported_entry [testmod]\n");
+
+    KernelSymbolResolver resolver;
+    bool loaded = resolver.load(kallsyms);
+
+    bool lookupOk = resolver.lookup("startup_64") == 0xffffffff81000000ULL &&
+        resolver.lookup("kernel!startup_64") == 0xffffffff81000000ULL &&
+        resolver.lookup("testmod!module_entry") == 0xffffffffc0201000ULL &&
+        resolver.lookup("hidden_by_kptr_restrict") == 0;
+    bool resolveOk = resolver.resolve(0xffffffff81000124ULL) == "kernel!secondary_startup_64+0x4" &&
+        resolver.resolve(0xffffffffc0201100ULL) == "testmod!exported_entry";
+
+    std::istringstream zeroSymbols("0000000000000000 T visible_zero\n");
+    KernelSymbolResolver zeroResolver;
+    bool zeroLoaded = zeroResolver.load(zeroSymbols, true);
+    bool zeroOk = zeroLoaded && zeroResolver.count() == 1;
+
+    printf("  kallsyms parse: %s\n",
+        (loaded && resolver.count() == 4 && lookupOk && resolveOk && zeroOk) ? "OK" : "FAILED");
+}
+
 static void test_lua_file_aliases() {
     printf("\n── Test: Lua file aliases ──\n");
 
@@ -2565,6 +2596,7 @@ int main(int argc, char* argv[]) {
     test_one_shot_breakpoints();
     test_thread_filtered_breakpoints();
     test_managed_method_breakpoints();
+    test_kernel_symbol_resolver();
     test_lua_file_aliases();
     test_lua_local_memory();
     test_lua_autoassemble_check();

@@ -292,7 +292,9 @@ Note: managed method symbols with resolved JIT/native entry addresses can now be
 - [ ] Physical memory read/write (bypass ptrace restrictions)
 - [ ] Process hiding
 - [ ] Page table manipulation
-- [ ] Kernel symbol resolution
+- [x] Kernel symbol resolution
+
+Note: kernel symbol resolution now has a `/proc/kallsyms` parser with raw and module-qualified lookup, address-to-symbol+offset resolution, module symbol handling, and zero-address filtering for restricted kallsyms output.
 
 ---
 
