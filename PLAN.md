@@ -306,6 +306,8 @@ Note: the kernel helper now also exposes CAP_SYS_ADMIN-gated physical-address re
 
 Note: page-table support is implemented as a CAP_SYS_ADMIN-gated virtual-to-physical translation ioctl for target process addresses, returning page size and offset for use with the physical-memory path. It intentionally avoids stealth PTE mutation.
 
+Note: process hiding remains intentionally unimplemented. The project should prefer explicit debugger/UI filtering for legitimate workflows rather than kernel stealth behavior.
+
 ---
 
 ## Implementation Schedule
