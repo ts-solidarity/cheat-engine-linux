@@ -2,6 +2,7 @@
 #include "platform/linux/ptrace_wrapper.hpp"
 #include "platform/linux/ceserver_client.hpp"
 #include "platform/network_compression.hpp"
+#include "platform/vulkan_overlay_injector.hpp"
 #include "scanner/pointer_scanner.hpp"
 #include "core/autoasm.hpp"
 #include "core/ct_file.hpp"
@@ -1600,6 +1601,43 @@ static void test_kernel_symbol_resolver() {
         (loaded && resolver.count() == 4 && lookupOk && resolveOk && zeroOk) ? "OK" : "FAILED");
 }
 
+static void test_vulkan_overlay_injector() {
+    printf("\n── Test: Vulkan overlay injector ──\n");
+
+    auto tempDir = std::filesystem::temp_directory_path() / "cecore-vulkan-layer-test";
+    auto layerPath = (tempDir / "libce_vulkan_overlay_layer.so").string();
+    auto manifestPath = (tempDir / "VK_LAYER_CE_linux_overlay.json").string();
+    std::filesystem::remove_all(tempDir);
+
+    auto manifest = makeVulkanOverlayManifest(layerPath);
+    std::string error;
+    bool wrote = writeVulkanOverlayManifest(manifestPath, layerPath, error);
+    auto env = buildVulkanOverlayEnvironment(tempDir.string(), layerPath, "VK_LAYER_EXISTING");
+
+    std::ifstream file(manifestPath, std::ios::binary);
+    std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    auto findEnv = [&](const std::string& name) {
+        auto it = std::find_if(env.variables.begin(), env.variables.end(), [&](const auto& item) {
+            return item.first == name;
+        });
+        return it == env.variables.end() ? std::string{} : it->second;
+    };
+
+    bool manifestOk = manifest.find("\"name\": \"VK_LAYER_CE_linux_overlay\"") != std::string::npos &&
+        manifest.find("\"library_path\": \"" + layerPath + "\"") != std::string::npos &&
+        written == manifest;
+    bool envOk = env.layerName == "VK_LAYER_CE_linux_overlay" &&
+        env.manifestPath == manifestPath &&
+        findEnv("VK_LAYER_PATH") == tempDir.string() &&
+        findEnv("VK_INSTANCE_LAYERS") == "VK_LAYER_EXISTING:VK_LAYER_CE_linux_overlay" &&
+        findEnv("CE_VULKAN_OVERLAY") == "1";
+
+    std::filesystem::remove_all(tempDir);
+    printf("  manifest/env: %s\n",
+        (wrote && error.empty() && manifestOk && envOk) ? "OK" : "FAILED");
+}
+
 static void test_lua_file_aliases() {
     printf("\n── Test: Lua file aliases ──\n");
 
@@ -2597,6 +2635,7 @@ int main(int argc, char* argv[]) {
     test_thread_filtered_breakpoints();
     test_managed_method_breakpoints();
     test_kernel_symbol_resolver();
+    test_vulkan_overlay_injector();
     test_lua_file_aliases();
     test_lua_local_memory();
     test_lua_autoassemble_check();

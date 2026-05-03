@@ -55,6 +55,7 @@ add_library(cecore SHARED
     analysis/managed_runtime.cpp
     analysis/structure_tools.cpp
     platform/network_compression.cpp
+    platform/vulkan_overlay_injector.cpp
     platform/linux/ceserver_client.cpp
     platform/linux/linux_process.cpp
     platform/linux/ptrace_wrapper.cpp
@@ -97,6 +98,13 @@ target_link_libraries(cescan PRIVATE cecore)
 add_library(speedhack SHARED plugins/speedhack.c)
 target_link_libraries(speedhack PRIVATE dl rt)
 set_target_properties(speedhack PROPERTIES PREFIX "lib")
+
+# ── Vulkan explicit overlay layer ──
+add_library(ce_vulkan_overlay_layer SHARED platform/vulkan_overlay_layer.cpp)
+set_target_properties(ce_vulkan_overlay_layer PROPERTIES
+    PREFIX "lib"
+    OUTPUT_NAME "ce_vulkan_overlay_layer"
+)
 
 # ── Qt6 GUI ──
 find_package(Qt6 COMPONENTS Widgets)

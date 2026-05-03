@@ -253,11 +253,13 @@ Note: generated trainers now embed table-level Lua and per-entry Lua/auto-assemb
 
 **3.2 Graphics Overlay (Linux equivalent of D3D hook)**
 - [x] X11 overlay window (transparent, always-on-top, click-through)
-- [ ] Vulkan layer injection for in-game overlay
+- [x] Vulkan layer injection for in-game overlay
 - [x] OSD text rendering (FPS counter, cheat status)
 - [x] Crosshair overlay
 
 Note: the Qt GUI now exposes a transparent always-on-top click-through overlay window with FPS/status OSD text and an optional centered crosshair from Tools -> Overlay.
+
+Note: Vulkan overlay injection now builds an explicit loader layer (`libce_vulkan_overlay_layer.so`) and provides manifest/environment helpers for launching games with `VK_LAYER_CE_linux_overlay`, covered by regression tests for manifest generation and launch variables.
 
 **3.3 Network/Remote Features**
 - [x] Connect to ceserver over TCP (for remote/Android targets)
