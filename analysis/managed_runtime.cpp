@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstring>
 #include <initializer_list>
+#include <set>
 
 namespace ce {
 namespace {
@@ -50,6 +51,51 @@ uintptr_t readPointer(const uint8_t* data, size_t pointerSize) {
     uint64_t value = 0;
     std::memcpy(&value, data, sizeof(value));
     return static_cast<uintptr_t>(value);
+}
+
+std::optional<uintptr_t> readProcessPointer(ProcessHandle& proc, uintptr_t address, size_t pointerSize) {
+    uint8_t bytes[8] = {};
+    auto read = proc.read(address, bytes, pointerSize);
+    if (!read || *read != pointerSize)
+        return std::nullopt;
+    return readPointer(bytes, pointerSize);
+}
+
+bool isReasonableManagedName(const std::string& text) {
+    if (text.empty())
+        return false;
+    for (unsigned char c : text) {
+        if (!std::isprint(c))
+            return false;
+    }
+    return true;
+}
+
+std::optional<std::string> readCString(ProcessHandle& proc, uintptr_t address, size_t maxLength) {
+    auto region = proc.queryRegion(address);
+    if (!region || !(region->protection & MemProt::Read))
+        return std::nullopt;
+
+    auto regionEnd = region->base + region->size;
+    if (regionEnd <= address)
+        return std::nullopt;
+    auto bytesToRead = std::min(maxLength + 1, static_cast<size_t>(regionEnd - address));
+    if (bytesToRead == 0)
+        return std::nullopt;
+
+    std::vector<char> buffer(bytesToRead);
+    auto read = proc.read(address, buffer.data(), buffer.size());
+    if (!read || *read == 0)
+        return std::nullopt;
+
+    auto nul = std::find(buffer.begin(), buffer.begin() + *read, '\0');
+    if (nul == buffer.begin() + *read)
+        return std::nullopt;
+
+    std::string text(buffer.begin(), nul);
+    if (!isReasonableManagedName(text))
+        return std::nullopt;
+    return text;
 }
 
 } // namespace
@@ -180,6 +226,83 @@ std::vector<ManagedObjectInfo> enumerateManagedObjects(
     }
 
     return objects;
+}
+
+std::vector<ManagedTypeInfo> extractManagedTypes(
+    ProcessHandle& proc,
+    const std::vector<uintptr_t>& typeHandles,
+    const ManagedTypeExtractionConfig& config) {
+    auto pointerSize = config.pointerSize != 0 ? config.pointerSize : (proc.is64bit() ? 8 : 4);
+    if (pointerSize != 4 && pointerSize != 8)
+        return {};
+
+    auto nameOffsets = config.namePointerOffsets;
+    if (nameOffsets.empty()) {
+        for (size_t i = 0; i < 8; ++i)
+            nameOffsets.push_back(i * pointerSize);
+    }
+    auto namespaceOffsets = config.namespacePointerOffsets;
+    if (namespaceOffsets.empty()) {
+        for (size_t i = 1; i < 8; ++i)
+            namespaceOffsets.push_back(i * pointerSize);
+    }
+
+    std::vector<ManagedTypeInfo> types;
+    std::set<uintptr_t> seen;
+    for (auto typeHandle : typeHandles) {
+        if (typeHandle == 0 || !seen.insert(typeHandle).second)
+            continue;
+
+        std::string name;
+        size_t selectedNameOffset = 0;
+        for (auto offset : nameOffsets) {
+            auto namePtr = readProcessPointer(proc, typeHandle + offset, pointerSize);
+            if (!namePtr)
+                continue;
+            auto candidate = readCString(proc, *namePtr, config.maxNameLength);
+            if (candidate) {
+                name = *candidate;
+                selectedNameOffset = offset;
+                break;
+            }
+        }
+        if (name.empty())
+            continue;
+
+        std::string namespaceName;
+        for (auto offset : namespaceOffsets) {
+            if (offset == selectedNameOffset)
+                continue;
+            auto namespacePtr = readProcessPointer(proc, typeHandle + offset, pointerSize);
+            if (!namespacePtr)
+                continue;
+            auto candidate = readCString(proc, *namespacePtr, config.maxNameLength);
+            if (candidate) {
+                namespaceName = *candidate;
+                break;
+            }
+        }
+
+        types.push_back({
+            typeHandle,
+            name,
+            namespaceName,
+            config.runtimeKind,
+        });
+    }
+
+    return types;
+}
+
+std::vector<ManagedTypeInfo> extractManagedObjectTypes(
+    ProcessHandle& proc,
+    const std::vector<ManagedObjectInfo>& objects,
+    const ManagedTypeExtractionConfig& config) {
+    std::vector<uintptr_t> typeHandles;
+    typeHandles.reserve(objects.size());
+    for (const auto& object : objects)
+        typeHandles.push_back(object.typeHandle);
+    return extractManagedTypes(proc, typeHandles, config);
 }
 
 } // namespace ce

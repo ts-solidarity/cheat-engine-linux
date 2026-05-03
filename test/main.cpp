@@ -402,6 +402,65 @@ static void test_managed_object_enumeration() {
         (objects.size() == 2 && playerOk && inventoryOk && boundedOk) ? "OK" : "FAILED");
 }
 
+static void test_managed_type_extraction() {
+    printf("\n── Test: Managed type extraction ──\n");
+
+    constexpr uintptr_t metadataBase = 0x510000;
+    constexpr uintptr_t heapBase = 0x810000;
+    std::vector<uint8_t> metadata(0x300, 0);
+    std::vector<uint8_t> heap(0x200, 0);
+
+    uintptr_t playerType = metadataBase + 0x40;
+    uintptr_t inventoryType = metadataBase + 0x80;
+    uintptr_t playerName = metadataBase + 0x140;
+    uintptr_t playerNamespace = metadataBase + 0x180;
+    uintptr_t inventoryName = metadataBase + 0x1c0;
+    uintptr_t inventoryNamespace = metadataBase + 0x200;
+
+    std::memcpy(metadata.data() + 0x40, &playerName, sizeof(playerName));
+    std::memcpy(metadata.data() + 0x48, &playerNamespace, sizeof(playerNamespace));
+    std::memcpy(metadata.data() + 0x80, &inventoryName, sizeof(inventoryName));
+    std::memcpy(metadata.data() + 0x88, &inventoryNamespace, sizeof(inventoryNamespace));
+    std::memcpy(metadata.data() + 0x140, "Player", sizeof("Player"));
+    std::memcpy(metadata.data() + 0x180, "Game.Entities", sizeof("Game.Entities"));
+    std::memcpy(metadata.data() + 0x1c0, "Inventory", sizeof("Inventory"));
+    std::memcpy(metadata.data() + 0x200, "Game.Items", sizeof("Game.Items"));
+
+    std::memcpy(heap.data() + 0x20, &playerType, sizeof(playerType));
+    std::memcpy(heap.data() + 0x80, &inventoryType, sizeof(inventoryType));
+    std::memcpy(heap.data() + 0xa0, &playerType, sizeof(playerType));
+
+    FakeProcessHandle proc({
+        {{metadataBase, metadata.size(), MemProt::Read, MemType::Image, MemState::Committed, "/opt/dotnet/System.Private.CoreLib.dll"}, metadata},
+        {{heapBase, heap.size(), MemProt::ReadWrite, MemType::Private, MemState::Committed, "[managed heap]"}, heap},
+    }, {
+        {metadataBase, metadata.size(), "System.Private.CoreLib.dll", "/opt/dotnet/System.Private.CoreLib.dll", true},
+    });
+
+    ManagedObjectEnumerationConfig objectConfig;
+    objectConfig.runtimeKind = ManagedRuntimeKind::CoreCLR;
+    auto objects = enumerateManagedObjects(proc, objectConfig);
+
+    ManagedTypeExtractionConfig typeConfig;
+    typeConfig.runtimeKind = ManagedRuntimeKind::CoreCLR;
+    auto types = extractManagedObjectTypes(proc, objects, typeConfig);
+
+    bool playerOk = std::any_of(types.begin(), types.end(), [&](const ManagedTypeInfo& type) {
+        return type.typeHandle == playerType &&
+            type.name == "Player" &&
+            type.namespaceName == "Game.Entities" &&
+            type.runtimeKind == ManagedRuntimeKind::CoreCLR;
+    });
+    bool inventoryOk = std::any_of(types.begin(), types.end(), [&](const ManagedTypeInfo& type) {
+        return type.typeHandle == inventoryType &&
+            type.name == "Inventory" &&
+            type.namespaceName == "Game.Items";
+    });
+
+    printf("  type names: %s\n",
+        (objects.size() == 3 && types.size() == 2 && playerOk && inventoryOk) ? "OK" : "FAILED");
+}
+
 static void test_gdb_remote_client() {
     printf("\n── Test: GDB remote client ──\n");
 
@@ -2432,6 +2491,7 @@ int main(int argc, char* argv[]) {
     test_code_analysis_references();
     test_managed_runtime_detection();
     test_managed_object_enumeration();
+    test_managed_type_extraction();
     test_gdb_remote_client();
     test_ceserver_client();
     test_network_compression();

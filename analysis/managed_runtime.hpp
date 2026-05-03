@@ -31,6 +31,13 @@ struct ManagedObjectInfo {
     std::string regionPath;
 };
 
+struct ManagedTypeInfo {
+    uintptr_t typeHandle = 0;
+    std::string name;
+    std::string namespaceName;
+    std::optional<ManagedRuntimeKind> runtimeKind;
+};
+
 struct ManagedObjectEnumerationConfig {
     std::optional<ManagedRuntimeKind> runtimeKind;
     uintptr_t heapStart = 0;
@@ -41,9 +48,25 @@ struct ManagedObjectEnumerationConfig {
     std::vector<MemoryRegion> typeHandleRanges;
 };
 
+struct ManagedTypeExtractionConfig {
+    std::optional<ManagedRuntimeKind> runtimeKind;
+    size_t pointerSize = 0;           // 0 means infer from ProcessHandle::is64bit()
+    size_t maxNameLength = 256;
+    std::vector<size_t> namePointerOffsets;
+    std::vector<size_t> namespacePointerOffsets;
+};
+
 std::vector<ManagedRuntimeInfo> detectManagedRuntimes(ProcessHandle& proc);
 std::vector<ManagedObjectInfo> enumerateManagedObjects(
     ProcessHandle& proc,
     const ManagedObjectEnumerationConfig& config = {});
+std::vector<ManagedTypeInfo> extractManagedTypes(
+    ProcessHandle& proc,
+    const std::vector<uintptr_t>& typeHandles,
+    const ManagedTypeExtractionConfig& config = {});
+std::vector<ManagedTypeInfo> extractManagedObjectTypes(
+    ProcessHandle& proc,
+    const std::vector<ManagedObjectInfo>& objects,
+    const ManagedTypeExtractionConfig& config = {});
 
 } // namespace ce
